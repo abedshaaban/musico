@@ -188,36 +188,44 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     private func probe(_ url: URL) async -> ProbeOutcome {
-        print("probe: starting for \(url.absoluteString)")
+        Self.debugLog("probe: starting for \(url.absoluteString)")
         // Prefer a HEAD request; fall back to a 1-byte ranged GET for servers that
         // reject HEAD but still expose the content type.
         switch await inspect(url, method: "HEAD") {
         case .resolved(let resolved):
-            print("probe: HEAD success for \(url.absoluteString)")
+            Self.debugLog("probe: HEAD success for \(url.absoluteString)")
             return .success(resolved)
         case .webPage:
-            print("probe: HEAD returned a web page for \(url.absoluteString)")
+            Self.debugLog("probe: HEAD returned a web page for \(url.absoluteString)")
             return .failure(Self.webPageFailureMessage)
         case .unreachable:
             break
         }
-        print("probe: HEAD failed, trying GET for \(url.absoluteString)")
+        Self.debugLog("probe: HEAD failed, trying GET for \(url.absoluteString)")
         switch await inspect(url, method: "GET", rangeFirstByte: true) {
         case .resolved(let resolved):
-            print("probe: GET success for \(url.absoluteString)")
+            Self.debugLog("probe: GET success for \(url.absoluteString)")
             return .success(resolved)
         case .webPage:
-            print("probe: GET returned a web page for \(url.absoluteString)")
+            Self.debugLog("probe: GET returned a web page for \(url.absoluteString)")
             return .failure(Self.webPageFailureMessage)
         case .unreachable:
             break
         }
-        print("probe: both failed for \(url.absoluteString)")
+        Self.debugLog("probe: both failed for \(url.absoluteString)")
         return .failure("The link isn't reachable, or its type isn't a supported audio or video file.")
     }
 
     private static let webPageFailureMessage =
         "This link points to a web page, not a direct audio or video file. Paste a link that ends in .mp3, .m4a, .mp4, or similar."
+
+    /// Set to false to hide Musico's debug prints.
+    private static let verboseLogging = true
+
+    private static func debugLog(_ message: String) {
+        guard verboseLogging else { return }
+        print(message)
+    }
 
     private func inspect(_ url: URL, method: String, rangeFirstByte: Bool = false) async -> InspectResult {
         var request = URLRequest(url: url)
@@ -229,12 +237,11 @@ final class DownloadManager: NSObject, ObservableObject {
             let (_, response) = try await probeSession.data(for: request)
             http = response as? HTTPURLResponse
             if let http = http, !(200..<400).contains(http.statusCode) {
-                print("inspect: status code \(http.statusCode) for \(url.absoluteString)")
+                Self.debugLog("inspect: status code \(http.statusCode) for \(url.absoluteString)")
                 return .unreachable
             }
-            print("inspect: response headers \(http?.allHeaderFields ?? [:]) for \(url.absoluteString)")
         } catch {
-            print("inspect: error \(error) for \(url.absoluteString)")
+            Self.debugLog("inspect: error \(error) for \(url.absoluteString)")
             return .unreachable
         }
         guard let http = http,
