@@ -11,6 +11,22 @@ Musico is a dependency-free SwiftUI media-library app for iPhone, targeting iOS 
 
 The target is iPhone-only, has an iOS 15.0 deployment target, and declares the Background Modes `audio` capability in `Info.plist`. Playback uses Apple's `AVPlayer`, `AVAudioSession`, and lock-screen `MediaPlayer` APIs.
 
+## Command-line build
+
+Build an unsigned Release app from anywhere inside or outside the repository:
+
+```bash
+./scripts/build-ios.sh
+```
+
+For a Debug build:
+
+```bash
+./scripts/build-ios.sh Debug
+```
+
+The result is written to `build/Build/Products/Release-iphoneos/Musico.app` (or the corresponding Debug directory). An unsigned build must be signed before normal installation on an iPhone.
+
 ## Background playback and external controls
 
 - Audio keeps playing while the display is locked or the app is in the background.
