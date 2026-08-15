@@ -6,6 +6,7 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var items: [LibraryItem] = []
     @Published private(set) var playlists: [Playlist] = []
     @Published private(set) var recentlyPlayedIDs: [UUID] = []
+    @Published private(set) var knownArtists: [String] = []
     @Published var lastError: String?
 
     init() {
@@ -132,6 +133,7 @@ final class LibraryStore: ObservableObject {
             }
             items.append(contentsOf: imported)
             items.sort { $0.addedAt > $1.addedAt }
+            imported.forEach { registerArtist($0.artist) }
             save()
         } catch {
             lastError = "Import failed: \(error.localizedDescription)"
@@ -168,6 +170,7 @@ final class LibraryStore: ObservableObject {
             )
             items.insert(item, at: 0)
             items.sort { $0.addedAt > $1.addedAt }
+            registerArtist(item.artist)
             save()
         }
     }
@@ -195,9 +198,40 @@ final class LibraryStore: ObservableObject {
 
     func update(_ item: LibraryItem, title: String, artist: String) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         items[index].title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        items[index].artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        items[index].artist = cleanedArtist
+        registerArtist(cleanedArtist)
         save()
+    }
+
+    func registerArtist(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isUsefulArtist(trimmed) else { return }
+        guard !knownArtists.contains(where: {
+            $0.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+        }) else { return }
+        knownArtists.append(trimmed)
+        knownArtists.sort {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+    }
+
+    func filteredArtists(matching query: String) -> [String] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return knownArtists }
+        return knownArtists.filter { $0.localizedCaseInsensitiveContains(trimmed) }
+    }
+
+    private static func isUsefulArtist(_ name: String) -> Bool {
+        !name.isEmpty && name.localizedCaseInsensitiveCompare("Unknown Artist") != .orderedSame
+    }
+
+    private func seedKnownArtists(from persisted: [String]) {
+        knownArtists = persisted
+        for item in items {
+            registerArtist(item.artist)
+        }
     }
 
     func delete(_ item: LibraryItem) {
@@ -265,6 +299,7 @@ final class LibraryStore: ObservableObject {
             recentlyPlayedIDs = persisted.recentlyPlayedIDs.filter { id in
                 items.contains(where: { $0.id == id })
             }
+            seedKnownArtists(from: persisted.knownArtists)
         } catch {
             lastError = "The saved library could not be loaded: \(error.localizedDescription)"
         }
@@ -274,7 +309,12 @@ final class LibraryStore: ObservableObject {
         AppPaths.ensureDirectories()
         do {
             let data = try JSONEncoder.musico.encode(
-                PersistedLibrary(items: items, playlists: playlists, recentlyPlayedIDs: recentlyPlayedIDs)
+                PersistedLibrary(
+                    items: items,
+                    playlists: playlists,
+                    recentlyPlayedIDs: recentlyPlayedIDs,
+                    knownArtists: knownArtists
+                )
             )
             try data.write(to: AppPaths.libraryFile, options: .atomic)
         } catch {

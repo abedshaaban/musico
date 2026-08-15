@@ -21,8 +21,7 @@ struct EditItemSheet: View {
                 Section("Details") {
                     TextField(musicoPrompt: "Title", text: $title)
                         .musicoFormTextField()
-                    TextField(musicoPrompt: "Artist", text: $artist)
-                        .musicoFormTextField()
+                    ArtistComboField(artist: $artist)
                 }
             }
             .navigationTitle("Edit Track")
@@ -40,7 +39,8 @@ struct EditItemSheet: View {
     }
 
     private func save() {
-        library.update(item, title: title, artist: artist)
+        let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        library.update(item, title: title, artist: cleanedArtist.isEmpty ? item.artist : cleanedArtist)
         playback.syncCurrentItem(with: library)
         dismiss()
     }

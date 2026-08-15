@@ -25,6 +25,7 @@
 		A10000000000000000000010 /* MediaMetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* MediaMetadataExtractor.swift */; };
 		A10000000000000000000011 /* EditItemSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* EditItemSheet.swift */; };
 		A10000000000000000000012 /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* QueueView.swift */; };
+		A10000000000000000000013 /* ArtistComboField.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* ArtistComboField.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +49,7 @@
 		B10000000000000000000012 /* MediaMetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaMetadataExtractor.swift; sourceTree = "<group>"; };
 		B10000000000000000000013 /* EditItemSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditItemSheet.swift; sourceTree = "<group>"; };
 		B10000000000000000000014 /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
+		B10000000000000000000015 /* ArtistComboField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistComboField.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -127,6 +129,7 @@
 				B10000000000000000000011 /* MediaArtworkView.swift */,
 				B10000000000000000000013 /* EditItemSheet.swift */,
 				B10000000000000000000014 /* QueueView.swift */,
+				B10000000000000000000015 /* ArtistComboField.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -224,6 +227,7 @@
 				A10000000000000000000010 /* MediaMetadataExtractor.swift in Sources */,
 				A10000000000000000000011 /* EditItemSheet.swift in Sources */,
 				A10000000000000000000012 /* QueueView.swift in Sources */,
+				A10000000000000000000013 /* ArtistComboField.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

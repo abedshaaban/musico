@@ -136,15 +136,22 @@ struct PersistedLibrary: Codable {
     var items: [LibraryItem]
     var playlists: [Playlist]
     var recentlyPlayedIDs: [UUID]
+    var knownArtists: [String]
 
     private enum CodingKeys: String, CodingKey {
-        case items, playlists, recentlyPlayedIDs
+        case items, playlists, recentlyPlayedIDs, knownArtists
     }
 
-    init(items: [LibraryItem], playlists: [Playlist], recentlyPlayedIDs: [UUID] = []) {
+    init(
+        items: [LibraryItem],
+        playlists: [Playlist],
+        recentlyPlayedIDs: [UUID] = [],
+        knownArtists: [String] = []
+    ) {
         self.items = items
         self.playlists = playlists
         self.recentlyPlayedIDs = recentlyPlayedIDs
+        self.knownArtists = knownArtists
     }
 
     init(from decoder: Decoder) throws {
@@ -152,6 +159,7 @@ struct PersistedLibrary: Codable {
         items = try container.decode([LibraryItem].self, forKey: .items)
         playlists = try container.decode([Playlist].self, forKey: .playlists)
         recentlyPlayedIDs = try container.decodeIfPresent([UUID].self, forKey: .recentlyPlayedIDs) ?? []
+        knownArtists = try container.decodeIfPresent([String].self, forKey: .knownArtists) ?? []
     }
 }
 
