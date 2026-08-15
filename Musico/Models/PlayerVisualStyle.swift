@@ -5,6 +5,7 @@ enum PlayerVisualStyle: String, CaseIterable, Identifiable, Codable {
     case compactDisc
     case cassette
     case classic
+    case waveform
     case video
 
     var id: String { rawValue }
@@ -15,6 +16,7 @@ enum PlayerVisualStyle: String, CaseIterable, Identifiable, Codable {
         case .compactDisc: return "CD"
         case .cassette: return "Cassette"
         case .classic: return "Classic"
+        case .waveform: return "Waveform"
         case .video: return "Video"
         }
     }
@@ -25,6 +27,7 @@ enum PlayerVisualStyle: String, CaseIterable, Identifiable, Codable {
         case .compactDisc: return "circle.circle"
         case .cassette: return "rectangle.on.rectangle"
         case .classic: return "square.stack"
+        case .waveform: return "waveform"
         case .video: return "play.rectangle"
         }
     }

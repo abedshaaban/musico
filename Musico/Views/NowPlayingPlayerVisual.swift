@@ -5,6 +5,7 @@ import UIKit
 
 struct NowPlayingPlayerVisual: View {
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackController
     let item: LibraryItem
     let style: PlayerVisualStyle
     let isPlaying: Bool
@@ -20,6 +21,13 @@ struct NowPlayingPlayerVisual: View {
                 CassettePlayerVisual(item: item, isPlaying: isPlaying)
             case .classic, .video:
                 ClassicPlayerVisual(item: item, isPlaying: isPlaying)
+            case .waveform:
+                WaveformPlayerVisual(
+                    level: playback.waveformLevel,
+                    frequency: playback.waveformFrequency,
+                    isPlaying: isPlaying,
+                    hasLiveData: playback.hasLiveWaveformData
+                )
             }
         }
         .frame(maxWidth: .infinity)
@@ -895,6 +903,188 @@ private struct CassettePlayerVisual: View {
                     .rotationEffect(.degrees(Double(index) * 60))
             }
         }
+    }
+}
+
+// MARK: - Waveform
+
+private struct WaveformPlayerVisual: View {
+    let level: CGFloat
+    let frequency: CGFloat
+    let isPlaying: Bool
+    let hasLiveData: Bool
+
+    var body: some View {
+        ZStack {
+            DeckChassis(
+                cornerRadius: 26,
+                top: Color(red: 0.10, green: 0.08, blue: 0.16),
+                bottom: Color(red: 0.025, green: 0.025, blue: 0.055)
+            )
+
+            VStack(spacing: 0) {
+                header
+
+                Spacer(minLength: 16)
+
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isPlaying)) { timeline in
+                    GeometryReader { geometry in
+                        let time = timeline.date.timeIntervalSinceReferenceDate
+                        let displayedLevel = resolvedLevel(at: time)
+                        let cycles = resolvedCycles
+
+                        ZStack {
+                            waveformGrid
+
+                            ReactiveWaveShape(
+                                amplitude: displayedLevel,
+                                cycles: cycles,
+                                phase: CGFloat(time * 2.4)
+                            )
+                            .stroke(
+                                MusicoTheme.magenta.opacity(0.34),
+                                style: StrokeStyle(lineWidth: 12, lineCap: .round, lineJoin: .round)
+                            )
+                            .blur(radius: 9)
+
+                            ReactiveWaveShape(
+                                amplitude: displayedLevel,
+                                cycles: cycles,
+                                phase: CGFloat(time * 2.4)
+                            )
+                            .stroke(
+                                MusicoTheme.brandGradientHorizontal,
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
+                            )
+                        }
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                    }
+                }
+                .frame(maxHeight: .infinity)
+
+                Spacer(minLength: 16)
+
+                footer
+            }
+            .padding(22)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Waveform player appearance")
+        .accessibilityValue(isPlaying ? "Playing" : "Paused")
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(isPlaying ? Color.green : Color.white.opacity(0.20))
+                .frame(width: 7, height: 7)
+                .shadow(color: isPlaying ? Color.green.opacity(0.65) : .clear, radius: 5)
+
+            Text(isPlaying ? "LIVE SIGNAL" : "SIGNAL PAUSED")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .tracking(1.5)
+                .foregroundColor(.white.opacity(0.58))
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "waveform")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(MusicoTheme.magenta)
+        }
+    }
+
+    private var footer: some View {
+        HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("AMPLITUDE")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundColor(.white.opacity(0.30))
+                Text("\(Int(min(max(level, 0), 1) * 100))%")
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.82))
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("FREQUENCY")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundColor(.white.opacity(0.30))
+                Text(hasLiveData ? "\(Int(frequency)) HZ" : "ANALYZING")
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.82))
+            }
+        }
+    }
+
+    private var waveformGrid: some View {
+        GeometryReader { geometry in
+            Path { path in
+                let horizontalStep = geometry.size.height / 6
+                let verticalStep = geometry.size.width / 8
+
+                for row in 0...6 {
+                    let y = CGFloat(row) * horizontalStep
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: geometry.size.width, y: y))
+                }
+                for column in 0...8 {
+                    let x = CGFloat(column) * verticalStep
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
+                }
+            }
+            .stroke(Color.white.opacity(0.045), lineWidth: 0.6)
+        }
+    }
+
+    private var resolvedCycles: CGFloat {
+        let low: CGFloat = 55
+        let high: CGFloat = 4_000
+        let clamped = min(max(frequency, low), high)
+        let normalized = log2(clamped / low) / log2(high / low)
+        return 1.8 + normalized * 5.8
+    }
+
+    private func resolvedLevel(at time: TimeInterval) -> CGFloat {
+        guard isPlaying else { return 0.04 }
+        if hasLiveData {
+            return 0.12 + min(max(level, 0), 1) * 0.82
+        }
+        return 0.22 + CGFloat((sin(time * 2.1) + 1) * 0.06)
+    }
+}
+
+private struct ReactiveWaveShape: Shape {
+    let amplitude: CGFloat
+    let cycles: CGFloat
+    let phase: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard rect.width > 0, rect.height > 0 else { return path }
+
+        let midY = rect.midY
+        let height = max(rect.height * 0.44 * amplitude, 0.8)
+        let step = max(rect.width / 100, 1)
+        var x: CGFloat = 0
+
+        while x <= rect.width {
+            let progress = x / rect.width
+            let envelope = 0.58 + 0.42 * sin(.pi * progress)
+            let fundamental = sin(progress * cycles * 2 * .pi + phase)
+            let harmonic = sin(progress * cycles * 4 * .pi - phase * 0.7) * 0.18
+            let point = CGPoint(
+                x: x,
+                y: midY + (fundamental + harmonic) * height * envelope
+            )
+            if x == 0 { path.move(to: point) }
+            else { path.addLine(to: point) }
+            x += step
+        }
+        return path
     }
 }
 

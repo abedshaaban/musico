@@ -30,6 +30,8 @@ struct NowPlayingView: View {
 
             ScrollView(.vertical, showsIndicators: layout.isCompact) {
               VStack(spacing: layout.sectionSpacing) {
+                Spacer(minLength: layout.topSpacing)
+
                 mediaArtwork(for: item)
                   .frame(
                     width: shouldShowInlineVideo(for: item)
@@ -94,15 +96,6 @@ struct NowPlayingView: View {
                 }
 
                 Spacer(minLength: layout.controlTopSpacing)
-
-                AudioReactiveWaveform(
-                  level: playback.waveformLevel,
-                  frequency: playback.waveformFrequency,
-                  isPlaying: playback.isPlaying,
-                  hasLiveData: playback.hasLiveWaveformData
-                )
-                .frame(height: layout.waveformHeight)
-                .padding(.horizontal, layout.scrubberInset)
 
                 VStack(spacing: layout.scrubberSpacing) {
                   Slider(
@@ -175,7 +168,6 @@ struct NowPlayingView: View {
                 minHeight: geometry.size.height,
                 alignment: .top
               )
-              .padding(.top, layout.topSpacing)
             }
           }
           .onChange(of: item.id) { _ in
@@ -349,7 +341,6 @@ struct NowPlayingLayoutMetrics: Equatable {
   let controlSpacing: CGFloat
   let playButtonSize: CGFloat
   let scrubberSpacing: CGFloat
-  let waveformHeight: CGFloat
   let controlTopSpacing: CGFloat
   let topSpacing: CGFloat
   let bottomSpacing: CGFloat
@@ -369,7 +360,6 @@ struct NowPlayingLayoutMetrics: Equatable {
       controlSpacing = 27
       playButtonSize = 50
       scrubberSpacing = 3
-      waveformHeight = 30
       controlTopSpacing = 4
       topSpacing = 4
       bottomSpacing = 8
@@ -381,101 +371,9 @@ struct NowPlayingLayoutMetrics: Equatable {
       controlSpacing = 36
       playButtonSize = 58
       scrubberSpacing = 6
-      waveformHeight = 42
       controlTopSpacing = 12
       topSpacing = 8
       bottomSpacing = 12
     }
-  }
-}
-
-private struct AudioReactiveWaveform: View {
-  let level: CGFloat
-  let frequency: CGFloat
-  let isPlaying: Bool
-  let hasLiveData: Bool
-
-  var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isPlaying)) { timeline in
-      GeometryReader { geometry in
-        let time = timeline.date.timeIntervalSinceReferenceDate
-        let displayedLevel = resolvedLevel(at: time)
-        let cycles = resolvedCycles
-
-        ZStack {
-          ReactiveWaveShape(
-            amplitude: displayedLevel,
-            cycles: cycles,
-            phase: CGFloat(time * 2.4)
-          )
-          .stroke(
-            MusicoTheme.magenta.opacity(0.24),
-            style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
-          )
-          .blur(radius: 5)
-
-          ReactiveWaveShape(
-            amplitude: displayedLevel,
-            cycles: cycles,
-            phase: CGFloat(time * 2.4)
-          )
-          .stroke(
-            MusicoTheme.brandGradientHorizontal,
-            style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round)
-          )
-        }
-        .frame(width: geometry.size.width, height: geometry.size.height)
-      }
-    }
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel("Live audio waveform")
-    .accessibilityValue(isPlaying ? "Playing" : "Paused")
-  }
-
-  private var resolvedCycles: CGFloat {
-    let low: CGFloat = 55
-    let high: CGFloat = 4_000
-    let clamped = min(max(frequency, low), high)
-    let normalized = log2(clamped / low) / log2(high / low)
-    return 1.8 + normalized * 5.8
-  }
-
-  private func resolvedLevel(at time: TimeInterval) -> CGFloat {
-    guard isPlaying else { return 0.04 }
-    if hasLiveData {
-      return 0.12 + min(max(level, 0), 1) * 0.82
-    }
-    return 0.22 + CGFloat((sin(time * 2.1) + 1) * 0.06)
-  }
-}
-
-private struct ReactiveWaveShape: Shape {
-  let amplitude: CGFloat
-  let cycles: CGFloat
-  let phase: CGFloat
-
-  func path(in rect: CGRect) -> Path {
-    var path = Path()
-    guard rect.width > 0, rect.height > 0 else { return path }
-
-    let midY = rect.midY
-    let height = max(rect.height * 0.44 * amplitude, 0.8)
-    let step = max(rect.width / 100, 1)
-    var x: CGFloat = 0
-
-    while x <= rect.width {
-      let progress = x / rect.width
-      let envelope = 0.58 + 0.42 * sin(.pi * progress)
-      let fundamental = sin(progress * cycles * 2 * .pi + phase)
-      let harmonic = sin(progress * cycles * 4 * .pi - phase * 0.7) * 0.18
-      let point = CGPoint(
-        x: x,
-        y: midY + (fundamental + harmonic) * height * envelope
-      )
-      if x == 0 { path.move(to: point) }
-      else { path.addLine(to: point) }
-      x += step
-    }
-    return path
   }
 }
