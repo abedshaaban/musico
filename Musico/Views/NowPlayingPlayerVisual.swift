@@ -914,6 +914,9 @@ private struct WaveformPlayerVisual: View {
     let isPlaying: Bool
     let hasLiveData: Bool
 
+    @State private var smoothedLevel: CGFloat = 0.04
+    @State private var smoothedCycles: CGFloat = 2.5
+
     var body: some View {
         ZStack {
             DeckChassis(
@@ -922,55 +925,77 @@ private struct WaveformPlayerVisual: View {
                 bottom: Color(red: 0.025, green: 0.025, blue: 0.055)
             )
 
-            VStack(spacing: 0) {
-                header
+            ambientGlow
 
-                Spacer(minLength: 16)
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
+                GeometryReader { geometry in
+                    let time = timeline.date.timeIntervalSinceReferenceDate
+                    let amplitude = displayAmplitude
+                    let cycles = smoothedCycles
+                    let phase = CGFloat(time * 1.85)
 
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isPlaying)) { timeline in
-                    GeometryReader { geometry in
-                        let time = timeline.date.timeIntervalSinceReferenceDate
-                        let displayedLevel = resolvedLevel(at: time)
-                        let cycles = resolvedCycles
+                    ZStack {
+                        waveLayer(
+                            amplitude: amplitude * 0.92,
+                            cycles: cycles * 0.88,
+                            phase: phase * 0.72,
+                            width: geometry.size.width,
+                            height: geometry.size.height,
+                            strokeWidth: 18,
+                            color: MusicoTheme.violet.opacity(0.22),
+                            blur: 16
+                        )
 
-                        ZStack {
-                            waveformGrid
+                        waveLayer(
+                            amplitude: amplitude * 0.96,
+                            cycles: cycles * 1.04,
+                            phase: -phase * 0.54,
+                            width: geometry.size.width,
+                            height: geometry.size.height,
+                            strokeWidth: 10,
+                            color: MusicoTheme.magenta.opacity(0.28),
+                            blur: 10
+                        )
 
-                            ReactiveWaveShape(
-                                amplitude: displayedLevel,
-                                cycles: cycles,
-                                phase: CGFloat(time * 2.4)
-                            )
-                            .stroke(
-                                MusicoTheme.magenta.opacity(0.34),
-                                style: StrokeStyle(lineWidth: 12, lineCap: .round, lineJoin: .round)
-                            )
-                            .blur(radius: 9)
+                        waveFill(
+                            amplitude: amplitude,
+                            cycles: cycles,
+                            phase: phase,
+                            width: geometry.size.width,
+                            height: geometry.size.height
+                        )
 
-                            ReactiveWaveShape(
-                                amplitude: displayedLevel,
-                                cycles: cycles,
-                                phase: CGFloat(time * 2.4)
-                            )
-                            .stroke(
-                                MusicoTheme.brandGradientHorizontal,
-                                style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round)
-                            )
-                        }
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        waveLayer(
+                            amplitude: amplitude,
+                            cycles: cycles,
+                            phase: phase,
+                            width: geometry.size.width,
+                            height: geometry.size.height,
+                            strokeWidth: 2.5,
+                            gradient: MusicoTheme.brandGradientHorizontal,
+                            blur: 0
+                        )
                     }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
                 }
-                .frame(maxHeight: .infinity)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 28)
 
-                Spacer(minLength: 16)
-
-                footer
+            VStack {
+                header
+                Spacer(minLength: 0)
             }
             .padding(22)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Waveform player appearance")
         .accessibilityValue(isPlaying ? "Playing" : "Paused")
+        .onAppear { syncSmoothedValues(animated: false) }
+        .onChange(of: level) { _ in syncSmoothedValues(animated: true) }
+        .onChange(of: frequency) { _ in syncSmoothedValues(animated: true) }
+        .onChange(of: isPlaying) { _ in syncSmoothedValues(animated: true) }
+        .onChange(of: hasLiveData) { _ in syncSmoothedValues(animated: true) }
     }
 
     private var header: some View {
@@ -980,80 +1005,126 @@ private struct WaveformPlayerVisual: View {
                 .frame(width: 7, height: 7)
                 .shadow(color: isPlaying ? Color.green.opacity(0.65) : .clear, radius: 5)
 
-            Text(isPlaying ? "LIVE SIGNAL" : "SIGNAL PAUSED")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .tracking(1.5)
-                .foregroundColor(.white.opacity(0.58))
-
             Spacer(minLength: 0)
 
             Image(systemName: "waveform")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(MusicoTheme.magenta)
+                .foregroundStyle(MusicoTheme.brandGradientHorizontal)
         }
     }
 
-    private var footer: some View {
-        HStack(alignment: .bottom) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("AMPLITUDE")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.30))
-                Text("\(Int(min(max(level, 0), 1) * 100))%")
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.82))
-            }
+    private var ambientGlow: some View {
+        ZStack {
+            Circle()
+                .fill(MusicoTheme.magenta.opacity(0.14 + displayAmplitude * 0.12))
+                .blur(radius: 48)
+                .scaleEffect(0.72 + displayAmplitude * 0.18)
+                .offset(y: -8)
 
-            Spacer(minLength: 0)
-
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("FREQUENCY")
-                    .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .tracking(1.2)
-                    .foregroundColor(.white.opacity(0.30))
-                Text(hasLiveData ? "\(Int(frequency)) HZ" : "ANALYZING")
-                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.82))
-            }
+            Circle()
+                .fill(MusicoTheme.violet.opacity(0.10 + displayAmplitude * 0.08))
+                .blur(radius: 56)
+                .scaleEffect(0.64 + displayAmplitude * 0.14)
+                .offset(y: 18)
         }
+        .animation(.easeInOut(duration: 0.45), value: displayAmplitude)
     }
 
-    private var waveformGrid: some View {
-        GeometryReader { geometry in
-            Path { path in
-                let horizontalStep = geometry.size.height / 6
-                let verticalStep = geometry.size.width / 8
+    @ViewBuilder
+    private func waveLayer(
+        amplitude: CGFloat,
+        cycles: CGFloat,
+        phase: CGFloat,
+        width: CGFloat,
+        height: CGFloat,
+        strokeWidth: CGFloat,
+        color: Color? = nil,
+        gradient: LinearGradient? = nil,
+        blur: CGFloat
+    ) -> some View {
+        let shape = ReactiveWaveShape(
+            amplitude: amplitude,
+            cycles: cycles,
+            phase: phase
+        )
 
-                for row in 0...6 {
-                    let y = CGFloat(row) * horizontalStep
-                    path.move(to: CGPoint(x: 0, y: y))
-                    path.addLine(to: CGPoint(x: geometry.size.width, y: y))
-                }
-                for column in 0...8 {
-                    let x = CGFloat(column) * verticalStep
-                    path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: geometry.size.height))
-                }
+        Group {
+            if let gradient {
+                shape.stroke(
+                    gradient,
+                    style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round)
+                )
+            } else if let color {
+                shape.stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round)
+                )
             }
-            .stroke(Color.white.opacity(0.045), lineWidth: 0.6)
         }
+        .frame(width: width, height: height)
+        .blur(radius: blur)
     }
 
-    private var resolvedCycles: CGFloat {
+    private func waveFill(
+        amplitude: CGFloat,
+        cycles: CGFloat,
+        phase: CGFloat,
+        width: CGFloat,
+        height: CGFloat
+    ) -> some View {
+        ReactiveWaveFillShape(
+            amplitude: amplitude,
+            cycles: cycles,
+            phase: phase
+        )
+        .fill(
+            LinearGradient(
+                colors: [
+                    MusicoTheme.violet.opacity(0.22),
+                    MusicoTheme.magenta.opacity(0.14),
+                    MusicoTheme.coral.opacity(0.04),
+                    Color.clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .frame(width: width, height: height)
+        .blur(radius: 1.5)
+    }
+
+    private var displayAmplitude: CGFloat {
+        guard isPlaying else { return 0.035 }
+        return smoothedLevel
+    }
+
+    private var targetLevel: CGFloat {
+        guard isPlaying else { return 0.04 }
+        if hasLiveData {
+            return 0.14 + min(max(level, 0), 1) * 0.78
+        }
+        return 0.20
+    }
+
+    private var targetCycles: CGFloat {
         let low: CGFloat = 55
         let high: CGFloat = 4_000
         let clamped = min(max(frequency, low), high)
         let normalized = log2(clamped / low) / log2(high / low)
-        return 1.8 + normalized * 5.8
+        return 1.6 + normalized * 4.8
     }
 
-    private func resolvedLevel(at time: TimeInterval) -> CGFloat {
-        guard isPlaying else { return 0.04 }
-        if hasLiveData {
-            return 0.12 + min(max(level, 0), 1) * 0.82
+    private func syncSmoothedValues(animated: Bool) {
+        let levelAnimation = Animation.interpolatingSpring(stiffness: 120, damping: 18)
+        let cycleAnimation = Animation.interpolatingSpring(stiffness: 90, damping: 16)
+
+        if animated {
+            withAnimation(levelAnimation) { smoothedLevel = targetLevel }
+            withAnimation(cycleAnimation) { smoothedCycles = targetCycles }
+        } else {
+            smoothedLevel = targetLevel
+            smoothedCycles = targetCycles
         }
-        return 0.22 + CGFloat((sin(time * 2.1) + 1) * 0.06)
     }
 }
 
@@ -1063,27 +1134,91 @@ private struct ReactiveWaveShape: Shape {
     let phase: CGFloat
 
     func path(in rect: CGRect) -> Path {
-        var path = Path()
-        guard rect.width > 0, rect.height > 0 else { return path }
+        wavePoints(in: rect).openPath()
+    }
+
+    fileprivate func wavePoints(in rect: CGRect) -> WavePointSeries {
+        guard rect.width > 0, rect.height > 0 else {
+            return WavePointSeries(points: [])
+        }
 
         let midY = rect.midY
-        let height = max(rect.height * 0.44 * amplitude, 0.8)
-        let step = max(rect.width / 100, 1)
-        var x: CGFloat = 0
+        let height = max(rect.height * 0.46 * amplitude, 0.6)
+        let sampleCount = max(Int(rect.width / 1.5), 120)
+        let step = rect.width / CGFloat(sampleCount)
+        var points: [CGPoint] = []
+        points.reserveCapacity(sampleCount + 1)
 
-        while x <= rect.width {
+        for index in 0...sampleCount {
+            let x = CGFloat(index) * step
             let progress = x / rect.width
-            let envelope = 0.58 + 0.42 * sin(.pi * progress)
+            let envelope = pow(sin(.pi * progress), 0.72)
             let fundamental = sin(progress * cycles * 2 * .pi + phase)
-            let harmonic = sin(progress * cycles * 4 * .pi - phase * 0.7) * 0.18
-            let point = CGPoint(
-                x: x,
-                y: midY + (fundamental + harmonic) * height * envelope
-            )
-            if x == 0 { path.move(to: point) }
-            else { path.addLine(to: point) }
-            x += step
+            let harmonic = sin(progress * cycles * 4 * .pi - phase * 0.62) * 0.16
+            let shimmer = sin(progress * 10 * .pi + phase * 1.35) * 0.045
+            let y = midY + (fundamental + harmonic + shimmer) * height * envelope
+            points.append(CGPoint(x: x, y: y))
         }
+
+        return WavePointSeries(points: points)
+    }
+}
+
+private struct ReactiveWaveFillShape: Shape {
+    let amplitude: CGFloat
+    let cycles: CGFloat
+    let phase: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        ReactiveWaveShape(amplitude: amplitude, cycles: cycles, phase: phase)
+            .wavePoints(in: rect)
+            .closedFillPath(in: rect)
+    }
+}
+
+private struct WavePointSeries {
+    let points: [CGPoint]
+
+    func openPath() -> Path {
+        var path = Path()
+        guard let first = points.first else { return path }
+
+        path.move(to: first)
+        guard points.count > 2 else {
+            for point in points.dropFirst() {
+                path.addLine(to: point)
+            }
+            return path
+        }
+
+        for index in 1..<points.count {
+            let previous = points[index - 1]
+            let current = points[index]
+            let midpoint = CGPoint(
+                x: (previous.x + current.x) * 0.5,
+                y: (previous.y + current.y) * 0.5
+            )
+            if index == 1 {
+                path.addLine(to: midpoint)
+            } else {
+                path.addQuadCurve(to: midpoint, control: previous)
+            }
+        }
+
+        if let last = points.last {
+            path.addQuadCurve(to: last, control: points[points.count - 2])
+        }
+
+        return path
+    }
+
+    func closedFillPath(in rect: CGRect) -> Path {
+        var path = openPath()
+        guard let first = points.first, let last = points.last else { return path }
+
+        path.addLine(to: CGPoint(x: last.x, y: rect.maxY))
+        path.addLine(to: CGPoint(x: first.x, y: rect.maxY))
+        path.closeSubpath()
         return path
     }
 }

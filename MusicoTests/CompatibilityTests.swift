@@ -503,13 +503,49 @@ final class CompatibilityTests: XCTestCase {
             currentItemID: ids[1],
             currentQueueIndex: 1,
             elapsed: 92.5,
-            isShuffleEnabled: true
+            playbackMode: .repeatOne
         )
         let restored = try JSONDecoder.musico.decode(
             PersistedPlaybackState.self,
             from: JSONEncoder.musico.encode(state)
         )
         XCTAssertEqual(restored, state)
+    }
+
+    func testPlaybackQueueStateMigratesLegacyShuffleMode() throws {
+        let id = UUID()
+        let data = try JSONSerialization.data(withJSONObject: [
+            "queueIDs": [id.uuidString],
+            "currentItemID": id.uuidString,
+            "currentQueueIndex": 0,
+            "elapsed": 12.5,
+            "isShuffleEnabled": true
+        ])
+
+        let restored = try JSONDecoder.musico.decode(PersistedPlaybackState.self, from: data)
+
+        XCTAssertEqual(restored.playbackMode, .shuffle)
+    }
+
+    func testPlaybackQueueStateDefaultsLegacyPlaybackToLoop() throws {
+        let id = UUID()
+        let data = try JSONSerialization.data(withJSONObject: [
+            "queueIDs": [id.uuidString],
+            "currentItemID": id.uuidString,
+            "currentQueueIndex": 0,
+            "elapsed": 12.5,
+            "isShuffleEnabled": false
+        ])
+
+        let restored = try JSONDecoder.musico.decode(PersistedPlaybackState.self, from: data)
+
+        XCTAssertEqual(restored.playbackMode, .loop)
+    }
+
+    func testPlaybackModeCyclesLoopShuffleRepeat() {
+        XCTAssertEqual(PlaybackMode.loop.next, .shuffle)
+        XCTAssertEqual(PlaybackMode.shuffle.next, .repeatOne)
+        XCTAssertEqual(PlaybackMode.repeatOne.next, .loop)
     }
 
     func testMaintenanceDetectsMissingAndContentVerifiedDuplicates() throws {

@@ -118,11 +118,13 @@ struct NowPlayingView: View {
 
                 HStack(spacing: layout.controlSpacing) {
                   Button {
-                    playback.toggleShuffle()
+                    playback.cyclePlaybackMode()
                   } label: {
-                    Image(systemName: "shuffle")
-                      .foregroundColor(playback.isShuffleEnabled ? MusicoTheme.magenta : MusicoTheme.secondaryText)
+                    Image(systemName: playback.playbackMode.systemImage)
+                      .foregroundColor(MusicoTheme.magenta)
                   }
+                  .accessibilityLabel("Playback mode: \(playback.playbackMode.label)")
+                  .accessibilityHint("Switches to \(playback.playbackMode.next.label)")
                   Button {
                     playback.playPrevious()
                   } label: {
@@ -290,6 +292,24 @@ struct NowPlayingView: View {
     guard seconds.isFinite else { return "0:00" }
     let total = max(Int(seconds), 0)
     return String(format: "%d:%02d", total / 60, total % 60)
+  }
+}
+
+private extension PlaybackMode {
+  var systemImage: String {
+    switch self {
+    case .loop: return "repeat"
+    case .shuffle: return "shuffle"
+    case .repeatOne: return "repeat.1"
+    }
+  }
+
+  var label: String {
+    switch self {
+    case .loop: return "Loop playlist"
+    case .shuffle: return "Shuffle"
+    case .repeatOne: return "Repeat current song"
+    }
   }
 }
 

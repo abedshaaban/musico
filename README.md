@@ -49,7 +49,7 @@ For lower memory and battery use on older devices, artwork is downsampled and he
 - **Add** — paste a direct `https://` media link, a YouTube video, or a YouTube playlist. Playlist imports include an editable title/artist preview before anything is queued.
 - **Downloads** — live progress, cancel, retry, and clear for the background download queue.
 - **Library** — import user-provided audio/video through the Files picker, browse all media, and manage playlists.
-- **Now Playing** — play/pause, seek, skip, shuffle; shows video for video items.
+- **Now Playing** — play/pause, seek, skip, and cycle between playlist loop, shuffle, and repeat-current modes; shows video for video items.
 
 ## Add-by-URL flow
 

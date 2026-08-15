@@ -351,12 +351,62 @@ struct PersistedDownloads: Codable {
     var records: [DownloadRecord]
 }
 
+enum PlaybackMode: String, Codable, CaseIterable {
+    case loop
+    case shuffle
+    case repeatOne
+
+    var next: PlaybackMode {
+        switch self {
+        case .loop: return .shuffle
+        case .shuffle: return .repeatOne
+        case .repeatOne: return .loop
+        }
+    }
+}
+
 struct PersistedPlaybackState: Codable, Equatable {
     var queueIDs: [UUID]
     var currentItemID: UUID?
     var currentQueueIndex: Int
     var elapsed: Double
-    var isShuffleEnabled: Bool
+    var playbackMode: PlaybackMode
+}
+
+extension PersistedPlaybackState {
+    private enum CodingKeys: String, CodingKey {
+        case queueIDs, currentItemID, currentQueueIndex, elapsed
+        case playbackMode, isShuffleEnabled, isRepeatOneEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        queueIDs = try container.decode([UUID].self, forKey: .queueIDs)
+        currentItemID = try container.decodeIfPresent(UUID.self, forKey: .currentItemID)
+        currentQueueIndex = try container.decode(Int.self, forKey: .currentQueueIndex)
+        elapsed = try container.decode(Double.self, forKey: .elapsed)
+        if let savedMode = try container.decodeIfPresent(PlaybackMode.self, forKey: .playbackMode) {
+            playbackMode = savedMode
+        } else if try container.decodeIfPresent(Bool.self, forKey: .isRepeatOneEnabled) == true {
+            playbackMode = .repeatOne
+        } else if try container.decodeIfPresent(Bool.self, forKey: .isShuffleEnabled) == true {
+            playbackMode = .shuffle
+        } else {
+            playbackMode = .loop
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(queueIDs, forKey: .queueIDs)
+        try container.encodeIfPresent(currentItemID, forKey: .currentItemID)
+        try container.encode(currentQueueIndex, forKey: .currentQueueIndex)
+        try container.encode(elapsed, forKey: .elapsed)
+        try container.encode(playbackMode, forKey: .playbackMode)
+        // Keep these legacy flags so a downgraded build can still restore the queue.
+        try container.encode(playbackMode == .shuffle, forKey: .isShuffleEnabled)
+        try container.encode(playbackMode == .repeatOne, forKey: .isRepeatOneEnabled)
+    }
 }
 
 /// Shared on-disk locations. Downloaded and imported media both live inside

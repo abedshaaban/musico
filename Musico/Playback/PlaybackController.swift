@@ -12,7 +12,7 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var duration: Double = 0
-    @Published var isShuffleEnabled = false
+    @Published private(set) var playbackMode: PlaybackMode = .loop
     @Published var isAudioOnlyMode = false {
         didSet {
             guard isAudioOnlyMode != oldValue else { return }
@@ -71,6 +71,9 @@ final class PlaybackController: ObservableObject {
     private var crossfadeTask: Task<Void, Never>?
     private var secondaryPlayer: AVPlayer?
     private var isCrossfading = false
+
+    var isShuffleEnabled: Bool { playbackMode == .shuffle }
+    var isRepeatOneEnabled: Bool { playbackMode == .repeatOne }
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = true
@@ -229,7 +232,18 @@ final class PlaybackController: ObservableObject {
     }
 
     func toggleShuffle() {
-        isShuffleEnabled.toggle()
+        setPlaybackMode(isShuffleEnabled ? .loop : .shuffle)
+    }
+
+    func cyclePlaybackMode() {
+        setPlaybackMode(playbackMode.next)
+    }
+
+    private func setPlaybackMode(_ mode: PlaybackMode) {
+        guard playbackMode != mode else { return }
+        playbackMode = mode
+        cancelCrossfade()
+        prepareNextItemIfNeeded()
         persistPlaybackState()
     }
 
@@ -438,6 +452,12 @@ final class PlaybackController: ObservableObject {
         if let currentItem {
             library?.updateResumePosition(itemID: currentItem.id, seconds: 0, duration: duration, completed: true)
         }
+        if isRepeatOneEnabled,
+           let currentItem,
+           let fileURL = cachedFileURL {
+            start(currentItem, url: fileURL(currentItem), resumeAt: 0)
+            return
+        }
         if let preloadedPlayerItem,
            player.currentItem === preloadedPlayerItem,
            let next = preloadedLibraryItem,
@@ -463,7 +483,7 @@ final class PlaybackController: ObservableObject {
     }
 
     private func nextQueueIndex() -> Int? {
-        guard queue.count > 1 else { return nil }
+        guard !isRepeatOneEnabled, queue.count > 1 else { return nil }
         if isShuffleEnabled {
             var index = currentQueueIndex
             while index == currentQueueIndex { index = Int.random(in: queue.indices) }
@@ -569,7 +589,7 @@ final class PlaybackController: ObservableObject {
                 currentItemID: currentItem.id,
                 currentQueueIndex: currentQueueIndex,
                 elapsed: elapsed,
-                isShuffleEnabled: isShuffleEnabled
+                playbackMode: playbackMode
             )
             try JSONEncoder.musico.encode(state).write(to: AppPaths.playbackFile, options: .atomic)
         } catch {
@@ -587,7 +607,7 @@ final class PlaybackController: ObservableObject {
             return
         }
         queue = restoredQueue
-        isShuffleEnabled = state.isShuffleEnabled
+        playbackMode = state.playbackMode
         currentQueueIndex = restoredQueue.firstIndex(where: { $0.id == state.currentItemID })
             ?? min(max(state.currentQueueIndex, 0), restoredQueue.count - 1)
         let item = restoredQueue[currentQueueIndex]
