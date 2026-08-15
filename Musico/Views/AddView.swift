@@ -40,12 +40,6 @@ struct AddView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-
-                Section("What Musico won't do") {
-                    complianceRow("Never bypasses DRM or a service's access controls.")
-                    complianceRow("Only download content you're authorized to save.")
-                    complianceRow("Links from protected streaming hosts are refused.")
-                }
             }
             .musicoInsetGroupedListStyle()
             .navigationTitle("Add")
@@ -68,12 +62,6 @@ struct AddView: View {
         .padding(.top, 8)
         .padding(.bottom, 4)
         .textCase(nil)
-    }
-
-    private func complianceRow(_ text: String) -> some View {
-        Label(text, systemImage: "checkmark.shield")
-            .font(.subheadline)
-            .foregroundColor(.secondary)
     }
 }
 

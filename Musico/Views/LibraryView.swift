@@ -48,24 +48,18 @@ struct LibraryView: View {
                     Section("Recently Played") {
                         ForEach(recentlyPlayed.prefix(10)) { item in
                             MediaRow(item: item)
+                                .padding(.vertical, 8)
+                                .musicoFullBleedSwipeRow()
                                 .musicoLibraryRowTap {
                                     playback.play(item, from: recentlyPlayed, fileURL: library.fileURL)
                                 }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button {
-                                        editingItem = item
-                                    } label: {
-                                        Text("Edit")
-                                    }
-                                    .tint(.blue)
-
-                                    Button(role: .destructive) {
+                                .musicoMediaSwipeActions(
+                                    onEdit: { editingItem = item },
+                                    onDelete: {
                                         if playback.currentItem?.id == item.id { playback.stop() }
                                         library.delete(item)
-                                    } label: {
-                                        Text("Delete")
                                     }
-                                }
+                                )
                         }
                     }
                 }
@@ -90,6 +84,7 @@ struct LibraryView: View {
                                 Image(systemName: "music.note.list")
                             }
                         }
+                        .musicoFullBleedSwipeRow()
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 library.deletePlaylist(playlist)
@@ -117,6 +112,8 @@ struct LibraryView: View {
                     }
                     ForEach(displayedItems) { item in
                         MediaRow(item: item)
+                            .padding(.vertical, 8)
+                            .musicoFullBleedSwipeRow()
                             .musicoLibraryRowTap {
                                 playback.play(item, from: displayedItems, fileURL: library.fileURL)
                             }
@@ -146,25 +143,17 @@ struct LibraryView: View {
                                     Label("Delete", systemImage: "trash")
                                 }
                             }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button {
-                                    editingItem = item
-                                } label: {
-                                    Text("Edit")
-                                }
-                                .tint(.blue)
-
-                                Button(role: .destructive) {
+                            .musicoMediaSwipeActions(
+                                onEdit: { editingItem = item },
+                                onDelete: {
                                     if playback.currentItem?.id == item.id { playback.stop() }
                                     library.delete(item)
-                                } label: {
-                                    Text("Delete")
                                 }
-                            }
+                            )
                     }
                 }
             }
-            .musicoInsetGroupedListStyle()
+            .musicoPlainLibraryListStyle()
             .navigationTitle("Library")
             .searchable(text: $searchText, prompt: "Search by title or artist")
             .toolbar {
@@ -365,6 +354,8 @@ struct PlaylistDetailView: View {
                 }
                 ForEach(filteredItems) { item in
                     MediaRow(item: item)
+                        .padding(.vertical, 8)
+                        .musicoFullBleedSwipeRow()
                         .musicoLibraryRowTap {
                             playback.play(item, from: filteredItems, fileURL: library.fileURL)
                         }
@@ -375,24 +366,15 @@ struct PlaylistDetailView: View {
                                 Label("Edit Title & Artist", systemImage: "pencil")
                             }
                         }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button {
-                                editingItem = item
-                            } label: {
-                                Text("Edit")
-                            }
-                            .tint(.blue)
-
-                            Button(role: .destructive) {
-                                library.remove(item, from: playlistID)
-                            } label: {
-                                Text("Remove")
-                            }
-                        }
+                        .musicoMediaSwipeActions(
+                            onEdit: { editingItem = item },
+                            deleteLabel: "Remove",
+                            onDelete: { library.remove(item, from: playlistID) }
+                        )
                 }
             }
         }
-        .musicoInsetGroupedListStyle()
+        .musicoPlainLibraryListStyle()
         .navigationTitle(playlist?.name ?? "Playlist")
         .searchable(text: $searchText, prompt: "Search by title or artist")
         .sheet(item: $editingItem) { item in

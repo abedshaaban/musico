@@ -51,10 +51,43 @@ extension View {
 #endif
     }
 
+    /// Plain list rows so swipe actions use full-height rectangular backgrounds.
+    @ViewBuilder
+    func musicoPlainLibraryListStyle() -> some View {
+#if os(iOS)
+        listStyle(.plain)
+#else
+        self
+#endif
+    }
+
     /// Makes a library row tappable without wrapping it in `Button`, so trailing
     /// swipe actions render as full-height iOS-style actions instead of compact circles.
     func musicoLibraryRowTap(action: @escaping () -> Void) -> some View {
         contentShape(Rectangle())
             .onTapGesture(perform: action)
+    }
+
+    func musicoFullBleedSwipeRow() -> some View {
+        listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 0))
+            .listRowBackground(Color(UIColor.systemBackground))
+            .clipShape(Rectangle())
+    }
+
+    func musicoMediaSwipeActions(
+        editLabel: String = "Edit",
+        onEdit: @escaping () -> Void,
+        deleteLabel: String = "Delete",
+        onDelete: @escaping () -> Void
+    ) -> some View {
+        swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive, action: onDelete) {
+                Text(deleteLabel)
+            }
+            Button(action: onEdit) {
+                Text(editLabel)
+            }
+            .tint(.blue)
+        }
     }
 }
