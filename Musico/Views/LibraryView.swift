@@ -8,6 +8,19 @@ struct LibraryView: View {
     @State private var playlistName = ""
     @State private var isImporterPresented = false
     @State private var isImporting = false
+    @State private var searchText = ""
+    @State private var artworkTargetItem: LibraryItem?
+    @State private var isArtworkImporterPresented = false
+
+    private var filteredItems: [LibraryItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return library.items }
+        return library.items.filter {
+            $0.title.localizedCaseInsensitiveContains(query) ||
+            $0.artist.localizedCaseInsensitiveContains(query) ||
+            $0.originalFilename.localizedCaseInsensitiveContains(query)
+        }
+    }
 
     var body: some View {
         NavigationView {
@@ -51,8 +64,11 @@ struct LibraryView: View {
                     if library.items.isEmpty {
                         Text("Import audio or video files from this iPhone, iCloud Drive, or another Files location, or download a link from the Add tab.")
                             .foregroundColor(.secondary)
+                    } else if filteredItems.isEmpty {
+                        Text("No matches for \"\(searchText)\".")
+                            .foregroundColor(.secondary)
                     }
-                    ForEach(library.items) { item in
+                    ForEach(filteredItems) { item in
                         Button {
                             playback.play(item, from: library.items, fileURL: library.fileURL)
                         } label: {
@@ -66,6 +82,12 @@ struct LibraryView: View {
                                         Button(playlist.name) { library.add(item, to: playlist) }
                                     }
                                 }
+                            }
+                            Button {
+                                artworkTargetItem = item
+                                isArtworkImporterPresented = true
+                            } label: {
+                                Label("Set Cover Image", systemImage: "photo")
                             }
                             Button(role: .destructive) {
                                 if playback.currentItem?.id == item.id { playback.stop() }
@@ -87,6 +109,7 @@ struct LibraryView: View {
             }
             .musicoInsetGroupedListStyle()
             .navigationTitle("Library")
+            .searchable(text: $searchText, prompt: "Search by title or artist")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { isCreatingPlaylist = true } label: {
@@ -133,6 +156,21 @@ struct LibraryView: View {
                     library.lastError = "The file picker failed: \(error.localizedDescription)"
                 }
             }
+            .fileImporter(
+                isPresented: $isArtworkImporterPresented,
+                allowedContentTypes: [.image],
+                allowsMultipleSelection: false
+            ) { result in
+                guard let item = artworkTargetItem else { return }
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    Task { await library.setArtwork(for: item, from: url) }
+                case .failure(let error):
+                    library.lastError = "The image picker failed: \(error.localizedDescription)"
+                }
+                artworkTargetItem = nil
+            }
             .alert("Musico", isPresented: errorIsPresented) {
                 Button("OK", role: .cancel) { library.lastError = nil }
             } message: {
@@ -159,6 +197,7 @@ struct PlaylistDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackController
     let playlistID: UUID
+    @State private var searchText = ""
 
     private var playlist: Playlist? {
         library.playlists.first { $0.id == playlistID }
@@ -167,6 +206,15 @@ struct PlaylistDetailView: View {
     private var items: [LibraryItem] {
         guard let playlist else { return [] }
         return library.items(in: playlist)
+    }
+
+    private var filteredItems: [LibraryItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return items }
+        return items.filter {
+            $0.title.localizedCaseInsensitiveContains(query) ||
+            $0.artist.localizedCaseInsensitiveContains(query)
+        }
     }
 
     var body: some View {
@@ -195,8 +243,11 @@ struct PlaylistDetailView: View {
                 if items.isEmpty {
                     Text("Add media from the Library by touching and holding an item.")
                         .foregroundColor(.secondary)
+                } else if filteredItems.isEmpty {
+                    Text("No matches for \"\(searchText)\".")
+                        .foregroundColor(.secondary)
                 }
-                ForEach(items) { item in
+                ForEach(filteredItems) { item in
                     Button {
                         playback.play(item, from: items, fileURL: library.fileURL)
                     } label: {
@@ -215,5 +266,6 @@ struct PlaylistDetailView: View {
         }
         .musicoInsetGroupedListStyle()
         .navigationTitle(playlist?.name ?? "Playlist")
+        .searchable(text: $searchText, prompt: "Search by title or artist")
     }
 }

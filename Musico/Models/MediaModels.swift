@@ -17,6 +17,7 @@ struct LibraryItem: Identifiable, Codable, Hashable {
     let localFilename: String
     let originalFilename: String
     let addedAt: Date
+    var artworkFilename: String?
 }
 
 struct Playlist: Identifiable, Codable, Hashable {
@@ -109,6 +110,10 @@ enum AppPaths {
         applicationSupport.appendingPathComponent("Media", isDirectory: true)
     }
 
+    static var artwork: URL {
+        applicationSupport.appendingPathComponent("Artwork", isDirectory: true)
+    }
+
     static var libraryFile: URL {
         applicationSupport.appendingPathComponent("library.json")
     }
@@ -122,6 +127,7 @@ enum AppPaths {
         do {
             try FileManager.default.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: artwork, withIntermediateDirectories: true)
             return true
         } catch {
             return false

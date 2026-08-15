@@ -1,5 +1,6 @@
 import AVFoundation
 import MediaPlayer
+import UIKit
 
 @MainActor
 final class PlaybackController: ObservableObject {
@@ -210,6 +211,16 @@ final class PlaybackController: ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
+        if let artwork = lockScreenArtwork(for: currentItem) {
+            info[MPMediaItemPropertyArtwork] = artwork
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func lockScreenArtwork(for item: LibraryItem) -> MPMediaItemArtwork? {
+        guard let filename = item.artworkFilename else { return nil }
+        let url = AppPaths.artwork.appendingPathComponent(filename)
+        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        return MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 }

@@ -15,13 +15,24 @@ final class LibraryStore: ObservableObject {
         AppPaths.media.appendingPathComponent(item.localFilename)
     }
 
+    func artworkURL(for item: LibraryItem) -> URL? {
+        guard let filename = item.artworkFilename else { return nil }
+        let url = AppPaths.artwork.appendingPathComponent(filename)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     func importFiles(_ sourceURLs: [URL]) async {
         do {
             let destination = AppPaths.media
+            let artworkDirectory = AppPaths.artwork
             let imported = try await Task.detached(priority: .userInitiated) {
                 var newItems: [LibraryItem] = []
                 try FileManager.default.createDirectory(
                     at: destination,
+                    withIntermediateDirectories: true
+                )
+                try FileManager.default.createDirectory(
+                    at: artworkDirectory,
                     withIntermediateDirectories: true
                 )
 
@@ -51,16 +62,26 @@ final class LibraryStore: ObservableObject {
                     try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
 
                     let originalName = values.name ?? sourceURL.lastPathComponent
-                    let displayName = sourceURL.deletingPathExtension().lastPathComponent
+                    let fallbackTitle = sourceURL.deletingPathExtension().lastPathComponent
+                    let metadata = await MediaMetadataExtractor.extract(from: destinationURL)
+                    var artworkFilename: String?
+                    if let artworkData = metadata.artworkData {
+                        artworkFilename = try? MediaMetadataExtractor.saveArtwork(
+                            artworkData,
+                            to: artworkDirectory
+                        )
+                    }
+
                     newItems.append(
                         LibraryItem(
                             id: UUID(),
-                            title: displayName,
-                            artist: "Unknown Artist",
+                            title: metadata.title?.isEmpty == false ? metadata.title! : fallbackTitle,
+                            artist: metadata.artist?.isEmpty == false ? metadata.artist! : "Unknown Artist",
                             kind: kind,
                             localFilename: storedName,
                             originalFilename: originalName,
-                            addedAt: Date()
+                            addedAt: Date(),
+                            artworkFilename: artworkFilename
                         )
                     )
                 }
@@ -81,18 +102,49 @@ final class LibraryStore: ObservableObject {
 
     /// Register a file the DownloadManager has already moved into the media directory.
     func adoptDownloadedFile(storedFilename: String, title: String, kind: MediaKind, originalFilename: String) {
-        let item = LibraryItem(
-            id: UUID(),
-            title: title.isEmpty ? "Untitled" : title,
-            artist: "Unknown Artist",
-            kind: kind,
-            localFilename: storedFilename,
-            originalFilename: originalFilename,
-            addedAt: Date()
-        )
-        items.insert(item, at: 0)
-        items.sort { $0.addedAt > $1.addedAt }
-        save()
+        let mediaURL = AppPaths.media.appendingPathComponent(storedFilename)
+        Task {
+            let metadata = await MediaMetadataExtractor.extract(from: mediaURL)
+            var artworkFilename: String?
+            if let artworkData = metadata.artworkData {
+                artworkFilename = try? MediaMetadataExtractor.saveArtwork(artworkData, to: AppPaths.artwork)
+            }
+
+            let item = LibraryItem(
+                id: UUID(),
+                title: metadata.title?.isEmpty == false ? metadata.title! : (title.isEmpty ? "Untitled" : title),
+                artist: metadata.artist?.isEmpty == false ? metadata.artist! : "Unknown Artist",
+                kind: kind,
+                localFilename: storedFilename,
+                originalFilename: originalFilename,
+                addedAt: Date(),
+                artworkFilename: artworkFilename
+            )
+            items.insert(item, at: 0)
+            items.sort { $0.addedAt > $1.addedAt }
+            save()
+        }
+    }
+
+    func setArtwork(for item: LibraryItem, from sourceURL: URL) async {
+        do {
+            let accessed = sourceURL.startAccessingSecurityScopedResource()
+            defer {
+                if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+            }
+
+            let data = try Data(contentsOf: sourceURL)
+            let filename = try MediaMetadataExtractor.saveArtwork(data, to: AppPaths.artwork)
+            guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+
+            if let previous = items[index].artworkFilename {
+                try? FileManager.default.removeItem(at: AppPaths.artwork.appendingPathComponent(previous))
+            }
+            items[index].artworkFilename = filename
+            save()
+        } catch {
+            lastError = "Cover image could not be saved: \(error.localizedDescription)"
+        }
     }
 
     func update(_ item: LibraryItem, title: String, artist: String) {
@@ -104,6 +156,9 @@ final class LibraryStore: ObservableObject {
 
     func delete(_ item: LibraryItem) {
         try? FileManager.default.removeItem(at: fileURL(for: item))
+        if let artworkFilename = item.artworkFilename {
+            try? FileManager.default.removeItem(at: AppPaths.artwork.appendingPathComponent(artworkFilename))
+        }
         items.removeAll { $0.id == item.id }
         for index in playlists.indices {
             playlists[index].itemIDs.removeAll { $0 == item.id }

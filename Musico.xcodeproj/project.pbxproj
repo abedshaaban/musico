@@ -20,6 +20,9 @@
 		A1000000000000000000000B /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* NowPlayingView.swift */; };
 		A1000000000000000000000C /* PlatformViewModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* PlatformViewModifiers.swift */; };
 		A1000000000000000000000D /* YouTubeResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* YouTubeResolver.swift */; };
+		A1000000000000000000000E /* MiniPlayerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* MiniPlayerBar.swift */; };
+		A1000000000000000000000F /* MediaArtworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* MediaArtworkView.swift */; };
+		A10000000000000000000010 /* MediaMetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* MediaMetadataExtractor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +41,9 @@
 		B1000000000000000000000D /* Musico.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Musico.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1000000000000000000000E /* PlatformViewModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformViewModifiers.swift; sourceTree = "<group>"; };
 		B1000000000000000000000F /* YouTubeResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeResolver.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* MiniPlayerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerBar.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* MediaArtworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaArtworkView.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* MediaMetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaMetadataExtractor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -80,7 +86,10 @@
 		};
 		D10000000000000000000004 /* Models */ = {
 			isa = PBXGroup;
-			children = (B10000000000000000000002 /* MediaModels.swift */,);
+			children = (
+				B10000000000000000000002 /* MediaModels.swift */,
+				B10000000000000000000012 /* MediaMetadataExtractor.swift */,
+			);
 			path = Models;
 			sourceTree = "<group>";
 		};
@@ -110,6 +119,8 @@
 				B1000000000000000000000A /* LibraryView.swift */,
 				B1000000000000000000000B /* NowPlayingView.swift */,
 				B1000000000000000000000E /* PlatformViewModifiers.swift */,
+				B10000000000000000000010 /* MiniPlayerBar.swift */,
+				B10000000000000000000011 /* MediaArtworkView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -202,6 +213,9 @@
 				A1000000000000000000000B /* NowPlayingView.swift in Sources */,
 				A1000000000000000000000C /* PlatformViewModifiers.swift in Sources */,
 				A1000000000000000000000D /* YouTubeResolver.swift in Sources */,
+				A1000000000000000000000E /* MiniPlayerBar.swift in Sources */,
+				A1000000000000000000000F /* MediaArtworkView.swift in Sources */,
+				A10000000000000000000010 /* MediaMetadataExtractor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

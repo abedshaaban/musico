@@ -3,6 +3,7 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @EnvironmentObject private var playback: PlaybackController
+    @EnvironmentObject private var library: LibraryStore
 
     var body: some View {
         NavigationView {
@@ -79,7 +80,7 @@ struct NowPlayingView: View {
                             .foregroundColor(.secondary)
                         Text("Nothing Playing")
                             .font(.title2.bold())
-                        Text("Choose an item from Search or Library.")
+                        Text("Choose an item from Library.")
                             .foregroundColor(.secondary)
                     }
                 }
@@ -97,6 +98,8 @@ struct NowPlayingView: View {
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else if library.artworkURL(for: item) != nil {
+            LargeMediaArtworkView(item: item)
         } else {
             ZStack {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
