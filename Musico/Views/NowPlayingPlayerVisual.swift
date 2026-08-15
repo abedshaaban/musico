@@ -939,6 +939,7 @@ private struct WaveformPlayerVisual: View {
                 TrackWaveformCanvas(
                     bars: frame.bars,
                     scrollPhase: frame.scrollPhase,
+                    frequency: playback.waveformFrequency,
                     isPlaying: isPlaying,
                     isLoading: isLoading
                 )
@@ -1037,8 +1038,19 @@ private struct WaveformPlayerVisual: View {
 private struct TrackWaveformCanvas: View {
     let bars: [Float]
     let scrollPhase: CGFloat
+    let frequency: CGFloat
     let isPlaying: Bool
     let isLoading: Bool
+
+    private var frequencyTint: Color {
+        let clamped = min(max(frequency, 55), 4_000)
+        let normalized = (log2(clamped / 55) / log2(4_000 / 55))
+        return Color(
+            red: 0.45 + 0.55 * normalized,
+            green: 0.18 + 0.22 * (1 - normalized),
+            blue: 0.96 - 0.41 * normalized
+        )
+    }
 
     var body: some View {
         Canvas { context, size in
@@ -1052,18 +1064,19 @@ private struct TrackWaveformCanvas: View {
         guard bars.count > 2, size.width > 0, size.height > 0 else { return }
 
         let midY = size.height * 0.5
-        let maxAmplitude = size.height * 0.38
+        let maxAmplitude = size.height * 0.42
         let playheadX = size.width * 0.5
         let points = wavePoints(size: size, midY: midY, maxAmplitude: maxAmplitude)
 
+        drawCenterGlow(in: &context, midY: midY, size: size)
+        drawSubtleFill(in: &context, points: points, midY: midY, size: size)
         drawSoftGlow(in: &context, points: points, midY: midY, size: size)
         drawWaveLine(
             in: &context,
             points: points,
             midY: midY,
             playheadX: playheadX,
-            size: size,
-            mirror: true
+            size: size
         )
         drawNowMarker(in: &context, midY: midY, playheadX: playheadX)
     }
@@ -1076,7 +1089,7 @@ private struct TrackWaveformCanvas: View {
         return (0..<count).map { index in
             let x = CGFloat(index) * step - shift
             let amplitude = CGFloat(bars[index]) * maxAmplitude
-            return CGPoint(x: x, y: midY - amplitude)
+            return CGPoint(x: x, y: midY - amplitude * 0.5)
         }
     }
 
@@ -1103,34 +1116,68 @@ private struct TrackWaveformCanvas: View {
         points.map { CGPoint(x: $0.x, y: midY * 2 - $0.y) }
     }
 
+    private func drawCenterGlow(in context: inout GraphicsContext, midY: CGFloat, size: CGSize) {
+        var path = Path()
+        path.move(to: CGPoint(x: 0, y: midY))
+        path.addLine(to: CGPoint(x: size.width, y: midY))
+
+        context.drawLayer { layer in
+            layer.addFilter(.blur(radius: 12))
+            layer.stroke(
+                path,
+                with: .color(frequencyTint.opacity(isPlaying ? 0.22 : 0.08)),
+                lineWidth: 16
+            )
+        }
+    }
+
+    private func drawSubtleFill(
+        in context: inout GraphicsContext,
+        points: [CGPoint],
+        midY: CGFloat,
+        size: CGSize
+    ) {
+        var path = Path()
+        guard let first = points.first, let last = points.last else { return }
+
+        path.move(to: CGPoint(x: first.x, y: midY))
+        addSmoothCurve(to: &path, points: points)
+        path.addLine(to: CGPoint(x: last.x, y: midY))
+        path.closeSubpath()
+
+        let fillGradient = Gradient(colors: [
+            frequencyTint.opacity(0.10),
+            frequencyTint.opacity(0.04),
+            Color.clear
+        ])
+
+        context.fill(
+            path,
+            with: .linearGradient(
+                fillGradient,
+                startPoint: CGPoint(x: 0, y: midY - size.height * 0.25),
+                endPoint: CGPoint(x: 0, y: midY)
+            )
+        )
+    }
+
     private func drawSoftGlow(
         in context: inout GraphicsContext,
         points: [CGPoint],
         midY: CGFloat,
         size: CGSize
     ) {
-        let topPath = Path { path in
+        let path = Path { path in
             guard let first = points.first else { return }
             path.move(to: first)
             addSmoothCurve(to: &path, points: points)
-        }
-        let bottomPath = Path { path in
-            let mirror = mirrored(points: points, midY: midY)
-            guard let first = mirror.first else { return }
-            path.move(to: first)
-            addSmoothCurve(to: &path, points: mirror)
         }
 
         context.drawLayer { layer in
             layer.addFilter(.blur(radius: 7))
             layer.stroke(
-                topPath,
-                with: .color(MusicoTheme.magenta.opacity(isPlaying ? 0.26 : 0.10)),
-                lineWidth: 7
-            )
-            layer.stroke(
-                bottomPath,
-                with: .color(MusicoTheme.magenta.opacity(isPlaying ? 0.26 : 0.10)),
+                path,
+                with: .color(frequencyTint.opacity(isPlaying ? 0.30 : 0.12)),
                 lineWidth: 7
             )
         }
@@ -1141,41 +1188,22 @@ private struct TrackWaveformCanvas: View {
         points: [CGPoint],
         midY: CGFloat,
         playheadX: CGFloat,
-        size: CGSize,
-        mirror: Bool
+        size: CGSize
     ) {
         let gradient = Gradient(stops: [
             .init(color: MusicoTheme.violet.opacity(0.92), location: 0),
-            .init(color: MusicoTheme.magenta.opacity(0.95), location: 0.40),
-            .init(color: MusicoTheme.coral.opacity(0.90), location: 0.52),
+            .init(color: frequencyTint.opacity(0.95), location: 0.40),
+            .init(color: frequencyTint.opacity(0.90), location: 0.52),
             .init(color: Color.white.opacity(0.28), location: 1)
         ])
 
-        let topPath = Path { path in
+        let path = Path { path in
             guard let first = points.first else { return }
             path.move(to: first)
             addSmoothCurve(to: &path, points: points)
         }
         context.stroke(
-            topPath,
-            with: .linearGradient(
-                gradient,
-                startPoint: CGPoint(x: 0, y: midY),
-                endPoint: CGPoint(x: size.width, y: midY)
-            ),
-            lineWidth: 2.6
-        )
-
-        guard mirror else { return }
-
-        let bottomPath = Path { path in
-            let mirrorPoints = mirrored(points: points, midY: midY)
-            guard let first = mirrorPoints.first else { return }
-            path.move(to: first)
-            addSmoothCurve(to: &path, points: mirrorPoints)
-        }
-        context.stroke(
-            bottomPath,
+            path,
             with: .linearGradient(
                 gradient,
                 startPoint: CGPoint(x: 0, y: midY),
