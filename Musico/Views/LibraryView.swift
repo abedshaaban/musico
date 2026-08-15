@@ -14,6 +14,7 @@ struct LibraryView: View {
     @State private var artworkTargetItem: LibraryItem?
     @State private var isArtworkImporterPresented = false
     @State private var editingItem: LibraryItem?
+    @State private var isStoragePresented = false
 
     private var sortOption: LibrarySortOption {
         LibrarySortOption(rawValue: sortRaw) ?? .dateAdded
@@ -29,6 +30,9 @@ struct LibraryView: View {
         return library.items.filter {
             $0.title.localizedCaseInsensitiveContains(query) ||
             $0.artist.localizedCaseInsensitiveContains(query) ||
+            $0.album?.localizedCaseInsensitiveContains(query) == true ||
+            $0.genre?.localizedCaseInsensitiveContains(query) == true ||
+            $0.year.map(String.init)?.localizedCaseInsensitiveContains(query) == true ||
             $0.originalFilename.localizedCaseInsensitiveContains(query)
         }
     }
@@ -121,7 +125,7 @@ struct LibraryView: View {
                                 Button {
                                     editingItem = item
                                 } label: {
-                                    Label("Edit Title & Artist", systemImage: "pencil")
+                                    Label("Edit Metadata", systemImage: "pencil")
                                 }
                                 if !library.playlists.isEmpty {
                                     Menu("Add to Playlist") {
@@ -155,7 +159,7 @@ struct LibraryView: View {
             }
             .musicoPlainLibraryListStyle()
             .navigationTitle("Library")
-            .searchable(text: $searchText, prompt: "Search by title or artist")
+            .searchable(text: $searchText, prompt: "Search title, artist, album, genre, or year")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Menu {
@@ -191,6 +195,12 @@ struct LibraryView: View {
                     .accessibilityLabel("Sort and Filter")
                 }
                 ToolbarItem(placement: .primaryAction) {
+                    Button { isStoragePresented = true } label: {
+                        Image(systemName: "internaldrive")
+                    }
+                    .accessibilityLabel("Storage Management")
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button { isCreatingPlaylist = true } label: {
                         Image(systemName: "plus")
                     }
@@ -221,6 +231,9 @@ struct LibraryView: View {
             }
             .sheet(item: $editingItem) { item in
                 EditItemSheet(item: item)
+            }
+            .sheet(isPresented: $isStoragePresented) {
+                StorageManagementView()
             }
             .fileImporter(
                 isPresented: $isImporterPresented,
@@ -286,6 +299,189 @@ struct LibraryView: View {
     }
 }
 
+private struct StorageManagementView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackController
+    @Environment(\.dismiss) private var dismiss
+    @State private var report = StorageReport.empty
+    @State private var isScanning = true
+    @State private var isCleaning = false
+    @State private var confirmsCleanup = false
+    @State private var cleanupMessage: String?
+    @State private var deletionTarget: StorageReport.ItemUsage?
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section("Managed Storage") {
+                    storageRow("Media", bytes: report.mediaBytes, icon: "music.note")
+                    storageRow("Artwork", bytes: report.artworkBytes, icon: "photo")
+                    storageRow("Library Data", bytes: report.metadataBytes, icon: "doc.text")
+                    storageRow("Total", bytes: report.totalBytes, icon: "internaldrive")
+                }
+
+                Section {
+                    HStack {
+                        Label("Unused Files", systemImage: "trash")
+                        Spacer()
+                        Text("\(report.orphanedFiles.count)")
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("Reclaimable")
+                        Spacer()
+                        Text(Self.bytes(report.reclaimableBytes))
+                            .foregroundColor(.secondary)
+                    }
+                    Button(role: .destructive) {
+                        confirmsCleanup = true
+                    } label: {
+                        Label(isCleaning ? "Cleaning…" : "Remove Unused Files", systemImage: "trash")
+                    }
+                    .disabled(report.orphanedFiles.isEmpty || isCleaning)
+
+                    if let cleanupMessage {
+                        Text(cleanupMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("Cleanup")
+                } footer: {
+                    Text("Musico only offers files that are not referenced by the library and are at least one hour old. Active downloads and recently created artwork are protected.")
+                }
+
+                Section("Largest Files") {
+                    if report.itemUsage.isEmpty {
+                        Text(isScanning ? "Scanning library…" : "No media files found.")
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(Array(report.itemUsage.prefix(20))) { usage in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(usage.title)
+                                    .lineLimit(1)
+                                Text(usage.artist)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Text(Self.bytes(usage.bytes))
+                                .font(.caption.monospacedDigit())
+                                .foregroundColor(.secondary)
+                            Button(role: .destructive) {
+                                deletionTarget = usage
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Delete \(usage.title)")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Storage")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { refresh() } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isScanning || isCleaning)
+                    .accessibilityLabel("Refresh Storage")
+                }
+            }
+            .overlay {
+                if isScanning && report == .empty {
+                    ProgressView("Scanning…")
+                        .padding()
+                        .background(.regularMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+            .confirmationDialog(
+                "Remove unused files?",
+                isPresented: $confirmsCleanup,
+                titleVisibility: .visible
+            ) {
+                Button("Remove \(report.orphanedFiles.count) Files", role: .destructive) {
+                    clean()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will reclaim approximately \(Self.bytes(report.reclaimableBytes)).")
+            }
+            .alert(item: $deletionTarget) { usage in
+                Alert(
+                    title: Text("Delete \(usage.title)?"),
+                    message: Text("This removes the item and its media file, reclaiming approximately \(Self.bytes(usage.bytes))."),
+                    primaryButton: .destructive(Text("Delete")) {
+                        deleteItem(usage)
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            .task { await loadReport() }
+        }
+        .musicoStackNavigationStyle()
+    }
+
+    @ViewBuilder
+    private func storageRow(_ title: String, bytes: Int64, icon: String) -> some View {
+        HStack {
+            Label(title, systemImage: icon)
+            Spacer()
+            Text(Self.bytes(bytes))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private func refresh() {
+        guard !isScanning else { return }
+        isScanning = true
+        Task { await loadReport() }
+    }
+
+    @MainActor
+    private func loadReport() async {
+        report = await library.storageReport()
+        isScanning = false
+    }
+
+    private func clean() {
+        guard !isCleaning else { return }
+        isCleaning = true
+        cleanupMessage = nil
+        Task {
+            let result = await library.cleanOrphanedStorage(report)
+            cleanupMessage = result.removedFiles == 0
+                ? "No files were removed."
+                : "Removed \(result.removedFiles) files and reclaimed \(Self.bytes(result.reclaimedBytes))."
+            report = await library.storageReport()
+            isCleaning = false
+        }
+    }
+
+    private func deleteItem(_ usage: StorageReport.ItemUsage) {
+        guard let item = library.items.first(where: { $0.id == usage.id }) else {
+            refresh()
+            return
+        }
+        if playback.currentItem?.id == item.id { playback.stop() }
+        library.delete(item)
+        cleanupMessage = "Deleted \(usage.title) and reclaimed approximately \(Self.bytes(usage.bytes))."
+        refresh()
+    }
+
+    private static func bytes(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+    }
+}
+
 struct PlaylistDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackController
@@ -315,7 +511,10 @@ struct PlaylistDetailView: View {
         } else {
             searched = items.filter {
                 $0.title.localizedCaseInsensitiveContains(query) ||
-                $0.artist.localizedCaseInsensitiveContains(query)
+                $0.artist.localizedCaseInsensitiveContains(query) ||
+                ($0.album?.localizedCaseInsensitiveContains(query) ?? false) ||
+                ($0.genre?.localizedCaseInsensitiveContains(query) ?? false) ||
+                ($0.year.map(String.init)?.localizedCaseInsensitiveContains(query) ?? false)
             }
         }
         return library.sortedItems(searched, by: sortOption, filter: .all)
@@ -363,7 +562,7 @@ struct PlaylistDetailView: View {
                             Button {
                                 editingItem = item
                             } label: {
-                                Label("Edit Title & Artist", systemImage: "pencil")
+                                Label("Edit Metadata", systemImage: "pencil")
                             }
                         }
                         .musicoMediaSwipeActions(
@@ -376,7 +575,7 @@ struct PlaylistDetailView: View {
         }
         .musicoPlainLibraryListStyle()
         .navigationTitle(playlist?.name ?? "Playlist")
-        .searchable(text: $searchText, prompt: "Search by title or artist")
+        .searchable(text: $searchText, prompt: "Search title, artist, album, genre, or year")
         .sheet(item: $editingItem) { item in
             EditItemSheet(item: item)
         }

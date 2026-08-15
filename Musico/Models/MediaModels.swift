@@ -53,11 +53,31 @@ struct LibraryItem: Identifiable, Codable, Hashable {
     let id: UUID
     var title: String
     var artist: String
+    var album: String? = nil
+    var genre: String? = nil
+    var year: Int? = nil
+    var trackNumber: Int? = nil
     let kind: MediaKind
     let localFilename: String
     let originalFilename: String
     let addedAt: Date
     var artworkFilename: String?
+
+    var collectionSummary: String? {
+        let parts = [
+            album?.nilIfBlank,
+            year.map(String.init),
+            genre?.nilIfBlank
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
 }
 
 struct Playlist: Identifiable, Codable, Hashable {

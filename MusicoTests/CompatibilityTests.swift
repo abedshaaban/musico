@@ -326,6 +326,116 @@ final class CompatibilityTests: XCTestCase {
         XCTAssertEqual(decoded.artist, "Tame Impala")
     }
 
+    func testLibraryItemDecodesDataSavedBeforeExtendedMetadata() throws {
+        struct LegacyLibraryItem: Encodable {
+            let id = UUID()
+            let title = "Teardrop"
+            let artist = "Massive Attack"
+            let kind = MediaKind.audio
+            let localFilename = "teardrop.m4a"
+            let originalFilename = "Teardrop.m4a"
+            let addedAt = Date()
+            let artworkFilename: String? = nil
+        }
+
+        let data = try JSONEncoder().encode(LegacyLibraryItem())
+        let item = try JSONDecoder().decode(LibraryItem.self, from: data)
+
+        XCTAssertEqual(item.title, "Teardrop")
+        XCTAssertNil(item.album)
+        XCTAssertNil(item.genre)
+        XCTAssertNil(item.year)
+        XCTAssertNil(item.trackNumber)
+    }
+
+    func testMetadataTagParsingHandlesCommonFormats() {
+        XCTAssertEqual(MediaMetadataExtractor.parseYear("2024-10-18T00:00:00Z"), 2024)
+        XCTAssertEqual(MediaMetadataExtractor.parseYear("Released 1998"), 1998)
+        XCTAssertNil(MediaMetadataExtractor.parseYear("unknown"))
+        XCTAssertEqual(MediaMetadataExtractor.parseTrackNumber("03/12"), 3)
+        XCTAssertEqual(MediaMetadataExtractor.parseTrackNumber("7"), 7)
+        XCTAssertNil(MediaMetadataExtractor.parseTrackNumber("0/12"))
+    }
+
+    func testCollectionSummaryOmitsBlankMetadata() {
+        let item = LibraryItem(
+            id: UUID(),
+            title: "Teardrop",
+            artist: "Massive Attack",
+            album: "Mezzanine",
+            genre: "Trip Hop",
+            year: 1998,
+            kind: .audio,
+            localFilename: "teardrop.m4a",
+            originalFilename: "Teardrop.m4a",
+            addedAt: Date(),
+            artworkFilename: nil
+        )
+
+        XCTAssertEqual(item.collectionSummary, "Mezzanine · 1998 · Trip Hop")
+    }
+
+    func testStorageCleanupOnlyOffersOldUnreferencedFiles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let media = root.appendingPathComponent("Media", isDirectory: true)
+        let artwork = root.appendingPathComponent("Artwork", isDirectory: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artwork, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let referencedMedia = media.appendingPathComponent("referenced.m4a")
+        let referencedArtwork = artwork.appendingPathComponent("referenced.jpg")
+        let oldOrphanMedia = media.appendingPathComponent("old-orphan.m4a")
+        let oldOrphanArtwork = artwork.appendingPathComponent("old-orphan.jpg")
+        let recentOrphan = media.appendingPathComponent("active-download.tmp")
+        for url in [referencedMedia, referencedArtwork, oldOrphanMedia, oldOrphanArtwork, recentOrphan] {
+            try Data(repeating: 1, count: 128).write(to: url)
+        }
+
+        let now = Date()
+        let oldDate = now.addingTimeInterval(-LibraryStorageScanner.orphanGraceInterval - 60)
+        for url in [referencedMedia, referencedArtwork, oldOrphanMedia, oldOrphanArtwork] {
+            try FileManager.default.setAttributes(
+                [.modificationDate: oldDate],
+                ofItemAtPath: url.path
+            )
+        }
+
+        let item = LibraryItem(
+            id: UUID(),
+            title: "Referenced",
+            artist: "Artist",
+            kind: .audio,
+            localFilename: referencedMedia.lastPathComponent,
+            originalFilename: "Referenced.m4a",
+            addedAt: now,
+            artworkFilename: referencedArtwork.lastPathComponent
+        )
+        let report = LibraryStorageScanner.scan(
+            items: [item],
+            mediaDirectory: media,
+            artworkDirectory: artwork,
+            metadataFiles: [],
+            now: now
+        )
+
+        XCTAssertEqual(Set(report.orphanedFiles.map { $0.url.lastPathComponent }), [
+            oldOrphanMedia.lastPathComponent,
+            oldOrphanArtwork.lastPathComponent
+        ])
+        XCTAssertEqual(report.itemUsage.map(\.id), [item.id])
+
+        let result = LibraryStorageScanner.removeOrphans(report.orphanedFiles)
+        XCTAssertEqual(result.removedFiles, 2)
+        XCTAssertTrue(result.errors.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: referencedMedia.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: referencedArtwork.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recentOrphan.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldOrphanMedia.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldOrphanArtwork.path))
+    }
+
     @MainActor
     func testConfirmedDownloadMetadataOverridesEmbeddedTags() {
         XCTAssertEqual(

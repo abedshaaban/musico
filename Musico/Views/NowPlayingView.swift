@@ -38,6 +38,12 @@ struct NowPlayingView: View {
                     .font(layout.isCompact ? .subheadline : .body)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                  if let summary = item.collectionSummary {
+                    Text(summary)
+                      .font(.caption)
+                      .foregroundColor(.secondary)
+                      .lineLimit(1)
+                  }
                 }
                 .padding(.horizontal, layout.horizontalInset)
 

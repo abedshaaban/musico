@@ -7,6 +7,10 @@ enum MediaMetadataExtractor {
     struct ExtractedMetadata {
         var title: String?
         var artist: String?
+        var album: String?
+        var genre: String?
+        var year: Int?
+        var trackNumber: Int?
         var artworkData: Data?
     }
 
@@ -28,11 +32,54 @@ enum MediaMetadataExtractor {
             }
         }
 
+        for item in asset.metadata {
+            let value = item.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            switch item.identifier {
+            case .commonIdentifierAlbumName where metadata.album == nil:
+                metadata.album = value
+            case .commonIdentifierType where metadata.genre == nil:
+                if let value, !value.isEmpty, Int(value) == nil { metadata.genre = value }
+            case .commonIdentifierCreationDate where metadata.year == nil:
+                metadata.year = value.flatMap(parseYear)
+            default:
+                break
+            }
+
+            let rawKey = (item.key as? String) ?? ""
+            switch rawKey {
+            case "TALB", "©alb" where metadata.album == nil:
+                metadata.album = value
+            case "TCON", "©gen" where metadata.genre == nil:
+                metadata.genre = value
+            case "TYER", "TDRC", "©day" where metadata.year == nil:
+                metadata.year = value.flatMap(parseYear)
+            case "TRCK", "trkn" where metadata.trackNumber == nil:
+                metadata.trackNumber = value.flatMap(parseTrackNumber)
+                    ?? item.numberValue?.intValue
+            default:
+                break
+            }
+        }
+
         if metadata.artworkData == nil {
             metadata.artworkData = await videoThumbnail(from: asset)
         }
 
         return metadata
+    }
+
+    static func parseYear(_ raw: String) -> Int? {
+        let groups = raw.split { !$0.isNumber }
+        guard let candidate = groups.first(where: { $0.count == 4 }),
+              let year = Int(candidate), (1000...9999).contains(year) else { return nil }
+        return year
+    }
+
+    static func parseTrackNumber(_ raw: String) -> Int? {
+        let first = raw.split(separator: "/", maxSplits: 1).first ?? Substring(raw)
+        let digits = first.prefix { $0.isNumber }
+        guard let number = Int(digits), number > 0 else { return nil }
+        return number
     }
 
     /// Uses AVFoundation's runtime decoder/container check rather than trusting a file

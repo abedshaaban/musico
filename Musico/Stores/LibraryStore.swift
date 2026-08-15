@@ -157,6 +157,10 @@ final class LibraryStore: ObservableObject {
                             id: UUID(),
                             title: metadata.title?.isEmpty == false ? metadata.title! : fallbackTitle,
                             artist: metadata.artist?.isEmpty == false ? metadata.artist! : "Unknown Artist",
+                            album: metadata.album,
+                            genre: metadata.genre,
+                            year: metadata.year,
+                            trackNumber: metadata.trackNumber,
                             kind: kind,
                             localFilename: storedName,
                             originalFilename: originalName,
@@ -203,6 +207,10 @@ final class LibraryStore: ObservableObject {
             id: UUID(),
             title: Self.downloadedTitle(confirmed: confirmedTitle, embedded: metadata.title),
             artist: Self.downloadedArtist(confirmed: confirmedArtist, embedded: metadata.artist),
+            album: metadata.album,
+            genre: metadata.genre,
+            year: metadata.year,
+            trackNumber: metadata.trackNumber,
             kind: kind,
             localFilename: storedFilename,
             originalFilename: originalFilename,
@@ -261,13 +269,31 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func update(_ item: LibraryItem, title: String, artist: String) {
+    func update(
+        _ item: LibraryItem,
+        title: String,
+        artist: String,
+        album: String?,
+        genre: String?,
+        year: Int?,
+        trackNumber: Int?
+    ) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         items[index].title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         items[index].artist = cleanedArtist
+        items[index].album = Self.cleanedOptional(album)
+        items[index].genre = Self.cleanedOptional(genre)
+        items[index].year = year
+        items[index].trackNumber = trackNumber
         registerArtist(cleanedArtist)
         save()
+    }
+
+    private static func cleanedOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     func registerArtist(_ raw: String) {
@@ -342,6 +368,29 @@ final class LibraryStore: ObservableObject {
         playlist.itemIDs.compactMap { id in items.first(where: { $0.id == id }) }
     }
 
+    func storageReport() async -> StorageReport {
+        let snapshot = items
+        return await Task.detached(priority: .utility) {
+            LibraryStorageScanner.scan(
+                items: snapshot,
+                mediaDirectory: AppPaths.media,
+                artworkDirectory: AppPaths.artwork,
+                metadataFiles: [AppPaths.libraryFile, AppPaths.downloadsFile]
+            )
+        }.value
+    }
+
+    func cleanOrphanedStorage(_ report: StorageReport) async -> StorageCleanupResult {
+        let result = await Task.detached(priority: .utility) {
+            LibraryStorageScanner.removeOrphans(report.orphanedFiles)
+        }.value
+        clearArtworkCache()
+        if !result.errors.isEmpty {
+            lastError = "Some unused files could not be removed: \(result.errors.first ?? "Unknown error")"
+        }
+        return result
+    }
+
     private func downloadArtwork(from url: URL) async -> String? {
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
@@ -386,5 +435,157 @@ final class LibraryStore: ObservableObject {
         } catch {
             lastError = "Changes could not be saved: \(error.localizedDescription)"
         }
+    }
+}
+
+struct StorageReport: Equatable {
+    struct ItemUsage: Identifiable, Equatable {
+        let id: UUID
+        let title: String
+        let artist: String
+        let bytes: Int64
+    }
+
+    struct OrphanFile: Identifiable, Equatable {
+        enum Category: String {
+            case media = "Media"
+            case artwork = "Artwork"
+        }
+
+        var id: String { url.path }
+        let url: URL
+        let bytes: Int64
+        let category: Category
+    }
+
+    var mediaBytes: Int64
+    var artworkBytes: Int64
+    var metadataBytes: Int64
+    var itemUsage: [ItemUsage]
+    var orphanedFiles: [OrphanFile]
+
+    static let empty = StorageReport(
+        mediaBytes: 0,
+        artworkBytes: 0,
+        metadataBytes: 0,
+        itemUsage: [],
+        orphanedFiles: []
+    )
+
+    var totalBytes: Int64 { mediaBytes + artworkBytes + metadataBytes }
+    var reclaimableBytes: Int64 { orphanedFiles.reduce(0) { $0 + $1.bytes } }
+}
+
+struct StorageCleanupResult: Equatable {
+    var removedFiles: Int
+    var reclaimedBytes: Int64
+    var errors: [String]
+}
+
+enum LibraryStorageScanner {
+    static let orphanGraceInterval: TimeInterval = 60 * 60
+
+    static func scan(
+        items: [LibraryItem],
+        mediaDirectory: URL,
+        artworkDirectory: URL,
+        metadataFiles: [URL],
+        now: Date = Date(),
+        fileManager: FileManager = .default
+    ) -> StorageReport {
+        let mediaFiles = regularFiles(in: mediaDirectory, fileManager: fileManager)
+        let artworkFiles = regularFiles(in: artworkDirectory, fileManager: fileManager)
+        let referencedMedia = Set(items.map(\.localFilename))
+        let referencedArtwork = Set(items.compactMap(\.artworkFilename))
+        let cutoff = now.addingTimeInterval(-orphanGraceInterval)
+
+        let mediaSizes = Dictionary(uniqueKeysWithValues: mediaFiles.map { ($0.url.lastPathComponent, $0.bytes) })
+        let itemUsage = items.compactMap { item -> StorageReport.ItemUsage? in
+            guard let bytes = mediaSizes[item.localFilename] else { return nil }
+            return StorageReport.ItemUsage(
+                id: item.id,
+                title: item.title,
+                artist: item.artist,
+                bytes: bytes
+            )
+        }.sorted { $0.bytes > $1.bytes }
+
+        let orphanedMedia = mediaFiles.compactMap { file -> StorageReport.OrphanFile? in
+            guard !referencedMedia.contains(file.url.lastPathComponent),
+                  file.modifiedAt <= cutoff else { return nil }
+            return StorageReport.OrphanFile(url: file.url, bytes: file.bytes, category: .media)
+        }
+        let orphanedArtwork = artworkFiles.compactMap { file -> StorageReport.OrphanFile? in
+            guard !referencedArtwork.contains(file.url.lastPathComponent),
+                  file.modifiedAt <= cutoff else { return nil }
+            return StorageReport.OrphanFile(url: file.url, bytes: file.bytes, category: .artwork)
+        }
+
+        return StorageReport(
+            mediaBytes: mediaFiles.reduce(0) { $0 + $1.bytes },
+            artworkBytes: artworkFiles.reduce(0) { $0 + $1.bytes },
+            metadataBytes: metadataFiles.reduce(0) { $0 + fileSize(at: $1, fileManager: fileManager) },
+            itemUsage: itemUsage,
+            orphanedFiles: (orphanedMedia + orphanedArtwork).sorted { $0.bytes > $1.bytes }
+        )
+    }
+
+    static func removeOrphans(
+        _ files: [StorageReport.OrphanFile],
+        fileManager: FileManager = .default
+    ) -> StorageCleanupResult {
+        var result = StorageCleanupResult(removedFiles: 0, reclaimedBytes: 0, errors: [])
+        for file in files {
+            do {
+                try fileManager.removeItem(at: file.url)
+                result.removedFiles += 1
+                result.reclaimedBytes += file.bytes
+            } catch {
+                result.errors.append("\(file.url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        return result
+    }
+
+    private struct ScannedFile {
+        let url: URL
+        let bytes: Int64
+        let modifiedAt: Date
+    }
+
+    private static func regularFiles(
+        in directory: URL,
+        fileManager: FileManager
+    ) -> [ScannedFile] {
+        let keys: Set<URLResourceKey> = [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileAllocatedSizeKey,
+            .fileSizeKey,
+            .contentModificationDateKey
+        ]
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        return urls.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: keys),
+                  values.isRegularFile == true,
+                  values.isSymbolicLink != true else { return nil }
+            return ScannedFile(
+                url: url,
+                bytes: Int64(values.fileAllocatedSize ?? values.fileSize ?? 0),
+                modifiedAt: values.contentModificationDate ?? .distantPast
+            )
+        }
+    }
+
+    private static func fileSize(at url: URL, fileManager: FileManager) -> Int64 {
+        guard let values = try? url.resourceValues(forKeys: [.fileAllocatedSizeKey, .fileSizeKey]) else {
+            return 0
+        }
+        return Int64(values.fileAllocatedSize ?? values.fileSize ?? 0)
     }
 }
