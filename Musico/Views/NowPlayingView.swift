@@ -17,9 +17,16 @@ struct NowPlayingView: View {
         NavigationView {
             Group {
                 if let item = playback.currentItem {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 20) {
+                        PlayerStylePicker(
+                            selection: $visualStyleRaw,
+                            styles: PlayerVisualStyle.options(for: item)
+                        )
+                        .padding(.horizontal, 20)
+
                         mediaArtwork(for: item)
                             .padding(.horizontal, 20)
+                            .id("\(item.id)-\(visualStyleRaw)")
 
                         VStack(spacing: 5) {
                             Text(item.title)
@@ -29,10 +36,12 @@ struct NowPlayingView: View {
                                 .foregroundColor(.secondary)
                         }
 
-                        if let sleepLabel = playback.sleepTimerLabel {
-                            Label("Sleep in \(sleepLabel)", systemImage: "moon.zzz")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        if item.kind == .video, visualStyle == .video {
+                            Toggle(isOn: $playback.isAudioOnlyMode) {
+                                Label("Audio Only", systemImage: "waveform")
+                                    .font(.subheadline)
+                            }
+                            .padding(.horizontal, 28)
                         }
 
                         if item.kind == .video && (playback.isAudioOnlyMode || scenePhase != .active) {
@@ -41,6 +50,12 @@ struct NowPlayingView: View {
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
+                        }
+
+                        if let sleepLabel = playback.sleepTimerLabel {
+                            Label("Sleep in \(sleepLabel)", systemImage: "moon.zzz")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
 
                         VStack(spacing: 6) {
@@ -94,7 +109,13 @@ struct NowPlayingView: View {
 
                         Spacer(minLength: 12)
                     }
-                    .padding(.top)
+                    .padding(.top, 8)
+                    .onChange(of: item.id) { _ in
+                        normalizeVisualStyle(for: item)
+                    }
+                    .onAppear {
+                        normalizeVisualStyle(for: item)
+                    }
                 } else {
                     VStack(spacing: 16) {
                         Image(systemName: "play.circle")
@@ -113,29 +134,11 @@ struct NowPlayingView: View {
                 ToolbarItem(placement: .primaryAction) {
                     if playback.currentItem != nil {
                         Menu {
-                            Menu("Player Style") {
-                                ForEach(PlayerVisualStyle.allCases) { style in
-                                    Button {
-                                        visualStyleRaw = style.rawValue
-                                    } label: {
-                                        if visualStyle == style {
-                                            Label(style.label, systemImage: style.systemImage)
-                                        } else {
-                                            Text(style.label)
-                                        }
-                                    }
-                                }
-                            }
                             Button { isQueuePresented = true } label: {
                                 Label("Up Next", systemImage: "list.bullet")
                             }
                             Button { isSleepTimerPresented = true } label: {
                                 Label("Sleep Timer", systemImage: "moon.zzz")
-                            }
-                            if playback.currentItem?.kind == .video {
-                                Toggle(isOn: $playback.isAudioOnlyMode) {
-                                    Label("Audio Only", systemImage: "waveform")
-                                }
                             }
                             if playback.sleepTimerRemaining != nil {
                                 Button("Cancel Sleep Timer", role: .destructive) {
@@ -166,6 +169,7 @@ struct NowPlayingView: View {
     @ViewBuilder
     private func mediaArtwork(for item: LibraryItem) -> some View {
         let showVideoPlayer = item.kind == .video
+            && visualStyle == .video
             && !playback.isAudioOnlyMode
             && scenePhase == .active
 
@@ -177,15 +181,68 @@ struct NowPlayingView: View {
         } else {
             NowPlayingPlayerVisual(
                 item: item,
-                style: visualStyle,
+                style: visualStyle == .video ? .classic : visualStyle,
                 isPlaying: playback.isPlaying
             )
         }
+    }
+
+    private func normalizeVisualStyle(for item: LibraryItem) {
+        let options = PlayerVisualStyle.options(for: item)
+        guard !options.contains(visualStyle) else { return }
+        visualStyleRaw = options.first?.rawValue ?? PlayerVisualStyle.vinyl.rawValue
     }
 
     private func format(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "0:00" }
         let total = max(Int(seconds), 0)
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+private struct PlayerStylePicker: View {
+    @Binding var selection: String
+    let styles: [PlayerVisualStyle]
+
+    private var selectedStyle: PlayerVisualStyle {
+        PlayerVisualStyle(rawValue: selection) ?? .vinyl
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(styles) { style in
+                    Button {
+                        selection = style.rawValue
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: style.systemImage)
+                            Text(style.label)
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .foregroundColor(selectedStyle == style ? .primary : .secondary)
+                        .background(
+                            Capsule()
+                                .fill(
+                                    selectedStyle == style
+                                        ? Color.accentColor.opacity(0.16)
+                                        : Color.secondary.opacity(0.12)
+                                )
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(
+                                    selectedStyle == style ? Color.accentColor.opacity(0.35) : Color.clear,
+                                    lineWidth: 1
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 2)
+        }
     }
 }

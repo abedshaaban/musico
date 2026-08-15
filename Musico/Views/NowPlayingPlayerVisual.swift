@@ -18,7 +18,7 @@ struct NowPlayingPlayerVisual: View {
                 CompactDiscPlayerVisual(item: item, isPlaying: isPlaying)
             case .cassette:
                 CassettePlayerVisual(item: item, isPlaying: isPlaying)
-            case .classic:
+            case .classic, .video:
                 ClassicPlayerVisual(item: item)
             }
         }
