@@ -13,6 +13,11 @@ enum LibrarySortOption: String, CaseIterable, Identifiable {
     case dateAdded
     case title
     case artist
+    case album
+    case year
+    case genre
+    case fileSize
+    case playCount
 
     var id: String { rawValue }
 
@@ -21,6 +26,11 @@ enum LibrarySortOption: String, CaseIterable, Identifiable {
         case .dateAdded: return "Date Added"
         case .title: return "Title"
         case .artist: return "Artist"
+        case .album: return "Album"
+        case .year: return "Year"
+        case .genre: return "Genre"
+        case .fileSize: return "File Size"
+        case .playCount: return "Play Count"
         }
     }
 }
@@ -62,6 +72,49 @@ struct LibraryItem: Identifiable, Codable, Hashable {
     let originalFilename: String
     let addedAt: Date
     var artworkFilename: String?
+    var tags: [String] = []
+    var playCount: Int = 0
+    var lastPlayedAt: Date? = nil
+    var resumePosition: Double = 0
+    var normalizationGainDB: Double? = nil
+
+    init(
+        id: UUID,
+        title: String,
+        artist: String,
+        album: String? = nil,
+        genre: String? = nil,
+        year: Int? = nil,
+        trackNumber: Int? = nil,
+        kind: MediaKind,
+        localFilename: String,
+        originalFilename: String,
+        addedAt: Date,
+        artworkFilename: String?,
+        tags: [String] = [],
+        playCount: Int = 0,
+        lastPlayedAt: Date? = nil,
+        resumePosition: Double = 0,
+        normalizationGainDB: Double? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.album = album
+        self.genre = genre
+        self.year = year
+        self.trackNumber = trackNumber
+        self.kind = kind
+        self.localFilename = localFilename
+        self.originalFilename = originalFilename
+        self.addedAt = addedAt
+        self.artworkFilename = artworkFilename
+        self.tags = tags
+        self.playCount = playCount
+        self.lastPlayedAt = lastPlayedAt
+        self.resumePosition = resumePosition
+        self.normalizationGainDB = normalizationGainDB
+    }
 
     var collectionSummary: String? {
         let parts = [
@@ -70,6 +123,54 @@ struct LibraryItem: Identifiable, Codable, Hashable {
             genre?.nilIfBlank
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, artist, album, genre, year, trackNumber, kind
+        case localFilename, originalFilename, addedAt, artworkFilename
+        case tags, playCount, lastPlayedAt, resumePosition, normalizationGainDB
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        artist = try container.decode(String.self, forKey: .artist)
+        album = try container.decodeIfPresent(String.self, forKey: .album)
+        genre = try container.decodeIfPresent(String.self, forKey: .genre)
+        year = try container.decodeIfPresent(Int.self, forKey: .year)
+        trackNumber = try container.decodeIfPresent(Int.self, forKey: .trackNumber)
+        kind = try container.decode(MediaKind.self, forKey: .kind)
+        localFilename = try container.decode(String.self, forKey: .localFilename)
+        originalFilename = try container.decode(String.self, forKey: .originalFilename)
+        addedAt = try container.decode(Date.self, forKey: .addedAt)
+        artworkFilename = try container.decodeIfPresent(String.self, forKey: .artworkFilename)
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        playCount = try container.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
+        lastPlayedAt = try container.decodeIfPresent(Date.self, forKey: .lastPlayedAt)
+        resumePosition = try container.decodeIfPresent(Double.self, forKey: .resumePosition) ?? 0
+        normalizationGainDB = try container.decodeIfPresent(Double.self, forKey: .normalizationGainDB)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(artist, forKey: .artist)
+        try container.encodeIfPresent(album, forKey: .album)
+        try container.encodeIfPresent(genre, forKey: .genre)
+        try container.encodeIfPresent(year, forKey: .year)
+        try container.encodeIfPresent(trackNumber, forKey: .trackNumber)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(localFilename, forKey: .localFilename)
+        try container.encode(originalFilename, forKey: .originalFilename)
+        try container.encode(addedAt, forKey: .addedAt)
+        try container.encodeIfPresent(artworkFilename, forKey: .artworkFilename)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(playCount, forKey: .playCount)
+        try container.encodeIfPresent(lastPlayedAt, forKey: .lastPlayedAt)
+        try container.encode(resumePosition, forKey: .resumePosition)
+        try container.encodeIfPresent(normalizationGainDB, forKey: .normalizationGainDB)
     }
 }
 
@@ -250,6 +351,14 @@ struct PersistedDownloads: Codable {
     var records: [DownloadRecord]
 }
 
+struct PersistedPlaybackState: Codable, Equatable {
+    var queueIDs: [UUID]
+    var currentItemID: UUID?
+    var currentQueueIndex: Int
+    var elapsed: Double
+    var isShuffleEnabled: Bool
+}
+
 /// Shared on-disk locations. Downloaded and imported media both live inside
 /// Application Support so the library is fully offline and self-contained.
 enum AppPaths {
@@ -272,6 +381,10 @@ enum AppPaths {
 
     static var downloadsFile: URL {
         applicationSupport.appendingPathComponent("downloads.json")
+    }
+
+    static var playbackFile: URL {
+        applicationSupport.appendingPathComponent("playback.json")
     }
 
     @discardableResult

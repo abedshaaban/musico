@@ -11,6 +11,7 @@ enum MediaMetadataExtractor {
         var genre: String?
         var year: Int?
         var trackNumber: Int?
+        var replayGainDB: Double?
         var artworkData: Data?
     }
 
@@ -46,6 +47,13 @@ enum MediaMetadataExtractor {
             }
 
             let rawKey = (item.key as? String) ?? ""
+            let normalizedKey = "\(rawKey) \(item.identifier?.rawValue ?? "")".lowercased()
+            if metadata.replayGainDB == nil,
+               normalizedKey.contains("replaygain"),
+               normalizedKey.contains("gain"),
+               let value {
+                metadata.replayGainDB = parseReplayGain(value)
+            }
             switch rawKey {
             case "TALB", "©alb":
                 if metadata.album == nil { metadata.album = value }
@@ -82,6 +90,15 @@ enum MediaMetadataExtractor {
         let digits = first.prefix { $0.isNumber }
         guard let number = Int(digits), number > 0 else { return nil }
         return number
+    }
+
+    static func parseReplayGain(_ raw: String) -> Double? {
+        let allowed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix { $0.isNumber || $0 == "." || $0 == "+" || $0 == "-" }
+        guard !allowed.isEmpty, let value = Double(allowed), (-30...30).contains(value) else {
+            return nil
+        }
+        return value
     }
 
     /// Uses AVFoundation's runtime decoder/container check rather than trusting a file

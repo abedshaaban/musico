@@ -81,7 +81,10 @@ enum MusicoBackupService {
     static let preferenceKeys = [
         "nowPlayingVisualStyle",
         "librarySort",
-        "libraryKindFilter"
+        "libraryKindFilter",
+        "playbackNormalization",
+        "playbackGapless",
+        "playbackCrossfade"
     ]
 
     private static let magic = Data("MUSICO-BACKUP\n".utf8)
@@ -92,8 +95,10 @@ enum MusicoBackupService {
 
     static func currentPreferences(defaults: UserDefaults = .standard) -> [String: String] {
         Dictionary(uniqueKeysWithValues: preferenceKeys.compactMap { key in
-            guard let value = defaults.string(forKey: key) else { return nil }
-            return (key, value)
+            guard let value = defaults.object(forKey: key) else { return nil }
+            if let string = value as? String { return (key, string) }
+            if let number = value as? NSNumber { return (key, number.stringValue) }
+            return nil
         })
     }
 
@@ -102,7 +107,15 @@ enum MusicoBackupService {
         defaults: UserDefaults = .standard
     ) {
         for key in preferenceKeys {
-            if let value = preferences[key] { defaults.set(value, forKey: key) }
+            guard let value = preferences[key] else { continue }
+            switch key {
+            case "playbackNormalization", "playbackGapless":
+                defaults.set((value as NSString).boolValue, forKey: key)
+            case "playbackCrossfade":
+                defaults.set(Double(value) ?? 0, forKey: key)
+            default:
+                defaults.set(value, forKey: key)
+            }
         }
     }
 

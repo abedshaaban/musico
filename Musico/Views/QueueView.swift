@@ -118,3 +118,42 @@ struct SleepTimerSheet: View {
         }
     }
 }
+
+struct PlaybackSettingsSheet: View {
+    @EnvironmentObject private var playback: PlaybackController
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    Toggle("ReplayGain Normalization", isOn: $playback.isNormalizationEnabled)
+                    Text("Uses embedded ReplayGain track values when available. Positive gain is capped to prevent clipping.")
+                        .font(.caption).foregroundColor(.secondary)
+                } header: { Text("Volume") }
+
+                Section {
+                    Toggle("Gapless Playback", isOn: $playback.isGaplessEnabled)
+                    Picker("Crossfade", selection: $playback.crossfadeSeconds) {
+                        Text("Off").tag(0.0)
+                        Text("2 seconds").tag(2.0)
+                        Text("4 seconds").tag(4.0)
+                        Text("6 seconds").tag(6.0)
+                        Text("8 seconds").tag(8.0)
+                    }
+                    Text("Gapless preloads the next audio track. Crossfade overlaps audio tracks and takes priority when enabled. Videos change normally.")
+                        .font(.caption).foregroundColor(.secondary)
+                } header: { Text("Transitions") }
+
+                Section("Resume") {
+                    Text("Musico remembers your position after 30 seconds and resumes long tracks, videos, and podcasts automatically.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            }
+            .musicoThemedListBackground()
+            .navigationTitle("Playback Settings")
+            .musicoInlineNavigationTitle()
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+}

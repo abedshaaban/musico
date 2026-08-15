@@ -15,6 +15,8 @@ struct LibraryView: View {
     @State private var isArtworkImporterPresented = false
     @State private var editingItem: LibraryItem?
     @State private var isStoragePresented = false
+    @State private var isMaintenancePresented = false
+    @State private var isHistoryPresented = false
 
     private var sortOption: LibrarySortOption {
         LibrarySortOption(rawValue: sortRaw) ?? .dateAdded
@@ -33,6 +35,7 @@ struct LibraryView: View {
             $0.album?.localizedCaseInsensitiveContains(query) == true ||
             $0.genre?.localizedCaseInsensitiveContains(query) == true ||
             $0.year.map(String.init)?.localizedCaseInsensitiveContains(query) == true ||
+            $0.tags.contains(where: { $0.localizedCaseInsensitiveContains(query) }) ||
             $0.originalFilename.localizedCaseInsensitiveContains(query)
         }
     }
@@ -160,7 +163,7 @@ struct LibraryView: View {
             .musicoPlainLibraryListStyle()
             .musicoThemedListBackground()
             .navigationTitle("Library")
-            .searchable(text: $searchText, prompt: "Search title, artist, album, genre, or year")
+            .searchable(text: $searchText, prompt: "Search title, artist, album, genre, tags, or year")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Menu {
@@ -189,6 +192,13 @@ struct LibraryView: View {
                                     }
                                 }
                             }
+                        }
+                        Divider()
+                        Button { isHistoryPresented = true } label: {
+                            Label("Playback History", systemImage: "clock.arrow.circlepath")
+                        }
+                        Button { isMaintenancePresented = true } label: {
+                            Label("Library Maintenance", systemImage: "wrench.and.screwdriver")
                         }
                     } label: {
                         Image(systemName: "line.3.horizontal.decrease.circle")
@@ -236,6 +246,12 @@ struct LibraryView: View {
             }
             .sheet(isPresented: $isStoragePresented) {
                 StorageManagementView()
+            }
+            .sheet(isPresented: $isMaintenancePresented) {
+                LibraryMaintenanceView()
+            }
+            .sheet(isPresented: $isHistoryPresented) {
+                PlaybackHistoryView()
             }
             .fileImporter(
                 isPresented: $isImporterPresented,
@@ -298,6 +314,259 @@ struct LibraryView: View {
     private func closePlaylistSheet() {
         playlistName = ""
         isCreatingPlaylist = false
+    }
+}
+
+private struct PlaybackHistoryView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackController
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            List {
+                if library.recentlyPlayedItems().isEmpty {
+                    Text("Tracks you play will appear here.")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(library.recentlyPlayedItems()) { item in
+                        Button {
+                            playback.play(item, from: library.recentlyPlayedItems(), fileURL: library.fileURL)
+                        } label: {
+                            HStack(spacing: 12) {
+                                MediaArtworkView(item: item, size: 44)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.title).foregroundColor(.primary).lineLimit(1)
+                                    Text("\(item.artist) · \(item.playCount) play\(item.playCount == 1 ? "" : "s")")
+                                        .font(.caption).foregroundColor(.secondary).lineLimit(1)
+                                    if let date = item.lastPlayedAt {
+                                        Text(date, style: .relative)
+                                            .font(.caption2).foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .musicoInsetGroupedListStyle()
+            .musicoThemedListBackground()
+            .navigationTitle("Playback History")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Clear", role: .destructive) { library.clearPlaybackHistory() }
+                        .disabled(library.recentlyPlayedItems().isEmpty)
+                }
+            }
+        }
+    }
+}
+
+private struct LibraryMaintenanceView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackController
+    @Environment(\.dismiss) private var dismiss
+    @State private var report = LibraryMaintenanceReport.empty
+    @State private var isScanning = true
+    @State private var isRescanning = false
+    @State private var resultMessage: String?
+    @State private var confirmMissingRemoval = false
+    @State private var confirmDuplicateRemoval = false
+    @State private var showBulkEdit = false
+    @State private var repairTargetID: UUID?
+    @State private var showRepairImporter = false
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section {
+                    Button { Task { await scan() } } label: {
+                        Label(isScanning ? "Scanning…" : "Scan Library", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isScanning)
+                    Button { Task { await rescanMetadata() } } label: {
+                        Label(isRescanning ? "Reading Metadata…" : "Rescan Embedded Metadata", systemImage: "doc.text.magnifyingglass")
+                    }
+                    .disabled(isRescanning || isScanning)
+                    Button { showBulkEdit = true } label: {
+                        Label("Bulk Edit Metadata and Tags", systemImage: "square.and.pencil")
+                    }
+                    .disabled(library.items.isEmpty)
+                    if let resultMessage { Text(resultMessage).font(.caption).foregroundColor(.secondary) }
+                } header: { Text("Tools") }
+
+                Section {
+                    HStack { Text("Missing Files"); Spacer(); Text("\(report.missingItems.count)").foregroundColor(.secondary) }
+                    ForEach(report.missingItems) { item in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                Text(item.filename).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            Button("Locate") {
+                                repairTargetID = item.id
+                                showRepairImporter = true
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    Button("Remove Missing Records", role: .destructive) { confirmMissingRemoval = true }
+                        .disabled(report.missingItems.isEmpty)
+                } header: { Text("Missing-file Repair") }
+                  footer: { Text("This removes broken library entries; it does not delete any existing media.") }
+
+                Section {
+                    HStack { Text("Duplicate Sets"); Spacer(); Text("\(report.duplicateGroups.count)").foregroundColor(.secondary) }
+                    HStack { Text("Reclaimable"); Spacer(); Text(ByteCountFormatter.string(fromByteCount: report.duplicateReclaimableBytes, countStyle: .file)).foregroundColor(.secondary) }
+                    ForEach(report.duplicateGroups) { group in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(group.items.count) identical files")
+                                .font(.subheadline).fontWeight(.semibold)
+                            ForEach(group.items) { item in
+                                Text("\(item.title) — \(item.artist)")
+                                    .font(.caption).foregroundColor(.secondary).lineLimit(1)
+                            }
+                        }
+                    }
+                    Button("Keep Oldest Copy in Each Set", role: .destructive) { confirmDuplicateRemoval = true }
+                        .disabled(report.duplicateGroups.isEmpty)
+                } header: { Text("Duplicate Detection") }
+                  footer: { Text("Duplicates are verified by file size and SHA-256 content, not just title.") }
+            }
+            .musicoInsetGroupedListStyle()
+            .musicoThemedListBackground()
+            .navigationTitle("Library Maintenance")
+            .musicoInlineNavigationTitle()
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .task { await scan() }
+            .sheet(isPresented: $showBulkEdit) { BulkMetadataEditView() }
+            .fileImporter(
+                isPresented: $showRepairImporter,
+                allowedContentTypes: [.audio, .movie],
+                allowsMultipleSelection: false
+            ) { result in
+                guard let itemID = repairTargetID else { return }
+                repairTargetID = nil
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    Task {
+                        if await library.repairMissingItem(itemID: itemID, from: url) {
+                            playback.reconcile(with: library)
+                            resultMessage = "The missing file was repaired."
+                            await scan()
+                        }
+                    }
+                case .failure(let error):
+                    library.lastError = "The replacement file could not be selected: \(error.localizedDescription)"
+                }
+            }
+            .alert("Remove Missing Records?", isPresented: $confirmMissingRemoval) {
+                Button("Cancel", role: .cancel) {}
+                Button("Remove", role: .destructive) {
+                    library.removeMissingRecords(); playback.reconcile(with: library); Task { await scan() }
+                }
+            } message: { Text("Broken entries will be removed from the library and playlists.") }
+            .alert("Remove Duplicate Copies?", isPresented: $confirmDuplicateRemoval) {
+                Button("Cancel", role: .cancel) {}
+                Button("Remove Copies", role: .destructive) {
+                    let keep = Set(report.duplicateGroups.compactMap(\.suggestedKeepID))
+                    library.removeDuplicates(keeping: keep, from: report)
+                    playback.reconcile(with: library)
+                    Task { await scan() }
+                }
+            } message: { Text("The oldest copy in every verified duplicate set will be kept. Other identical files and their library records will be deleted.") }
+        }
+    }
+
+    private func scan() async {
+        isScanning = true
+        report = await library.maintenanceReport()
+        isScanning = false
+    }
+
+    private func rescanMetadata() async {
+        isRescanning = true
+        let changed = await library.rescanEmbeddedMetadata()
+        playback.syncCurrentItem(with: library)
+        resultMessage = changed == 1 ? "Updated 1 item." : "Updated \(changed) items."
+        isRescanning = false
+    }
+}
+
+private struct BulkMetadataEditView: View {
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackController
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected = Set<UUID>()
+    @State private var artist = ""
+    @State private var album = ""
+    @State private var genre = ""
+    @State private var year = ""
+    @State private var tags = ""
+    @State private var replaceTags = false
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Select Items") {
+                    Button(selected.count == library.items.count ? "Deselect All" : "Select All") {
+                        selected = selected.count == library.items.count ? [] : Set(library.items.map(\.id))
+                    }
+                    ForEach(library.items) { item in
+                        Button { toggle(item.id) } label: {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(item.title).foregroundColor(.primary).lineLimit(1)
+                                    Text(item.artist).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Image(systemName: selected.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                            }
+                        }
+                    }
+                }
+                Section("Set Non-empty Fields") {
+                    TextField(musicoPrompt: "Artist", text: $artist).musicoFormTextField()
+                    TextField(musicoPrompt: "Album", text: $album).musicoFormTextField()
+                    TextField(musicoPrompt: "Genre", text: $genre).musicoFormTextField()
+                    TextField(musicoPrompt: "Year", text: $year).keyboardType(.numberPad).musicoFormTextField()
+                    TextField(musicoPrompt: "Tags, comma separated", text: $tags).musicoFormTextField()
+                    Toggle("Replace existing tags", isOn: $replaceTags)
+                }
+            }
+            .musicoThemedListBackground()
+            .navigationTitle("Bulk Edit")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") { apply() }.disabled(selected.isEmpty || !hasChanges)
+                }
+            }
+        }
+    }
+
+    private var hasChanges: Bool {
+        [artist, album, genre, year, tags].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    private func toggle(_ id: UUID) { if selected.contains(id) { selected.remove(id) } else { selected.insert(id) } }
+    private func value(_ raw: String) -> String? {
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+    private func apply() {
+        library.bulkUpdate(
+            itemIDs: selected, artist: value(artist), album: value(album), genre: value(genre),
+            year: value(year).flatMap(Int.init), tags: value(tags).map { $0.split(separator: ",").map(String.init) },
+            replaceTags: replaceTags
+        )
+        playback.syncCurrentItem(with: library)
+        dismiss()
     }
 }
 

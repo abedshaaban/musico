@@ -478,6 +478,10 @@ final class CompatibilityTests: XCTestCase {
         XCTAssertNil(item.genre)
         XCTAssertNil(item.year)
         XCTAssertNil(item.trackNumber)
+        XCTAssertEqual(item.tags, [])
+        XCTAssertEqual(item.playCount, 0)
+        XCTAssertEqual(item.resumePosition, 0)
+        XCTAssertNil(item.normalizationGainDB)
     }
 
     func testMetadataTagParsingHandlesCommonFormats() {
@@ -487,6 +491,53 @@ final class CompatibilityTests: XCTestCase {
         XCTAssertEqual(MediaMetadataExtractor.parseTrackNumber("03/12"), 3)
         XCTAssertEqual(MediaMetadataExtractor.parseTrackNumber("7"), 7)
         XCTAssertNil(MediaMetadataExtractor.parseTrackNumber("0/12"))
+        XCTAssertEqual(MediaMetadataExtractor.parseReplayGain("-7.25 dB"), -7.25)
+        XCTAssertEqual(MediaMetadataExtractor.parseReplayGain("+3.0 dB"), 3)
+        XCTAssertNil(MediaMetadataExtractor.parseReplayGain("loud"))
+    }
+
+    func testPlaybackQueueStateRoundTrips() throws {
+        let ids = [UUID(), UUID()]
+        let state = PersistedPlaybackState(
+            queueIDs: ids,
+            currentItemID: ids[1],
+            currentQueueIndex: 1,
+            elapsed: 92.5,
+            isShuffleEnabled: true
+        )
+        let restored = try JSONDecoder.musico.decode(
+            PersistedPlaybackState.self,
+            from: JSONEncoder.musico.encode(state)
+        )
+        XCTAssertEqual(restored, state)
+    }
+
+    func testMaintenanceDetectsMissingAndContentVerifiedDuplicates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("same audio bytes".utf8).write(to: root.appendingPathComponent("one.m4a"))
+        try Data("same audio bytes".utf8).write(to: root.appendingPathComponent("two.m4a"))
+        try Data("different bytes!".utf8).write(to: root.appendingPathComponent("different.m4a"))
+
+        func item(_ name: String, title: String) -> Musico.LibraryItem {
+            Musico.LibraryItem(
+                id: UUID(), title: title, artist: "Artist", kind: .audio,
+                localFilename: name, originalFilename: name, addedAt: Date(), artworkFilename: nil
+            )
+        }
+        let report = LibraryMaintenanceScanner.scan(
+            items: [
+                item("one.m4a", title: "One"), item("two.m4a", title: "Two"),
+                item("different.m4a", title: "Different"), item("missing.m4a", title: "Missing")
+            ],
+            mediaDirectory: root
+        )
+
+        XCTAssertEqual(report.missingItems.map { $0.title }, ["Missing"])
+        XCTAssertEqual(report.duplicateGroups.count, 1)
+        XCTAssertEqual(Set(report.duplicateGroups[0].items.map { $0.title }), Set(["One", "Two"]))
+        XCTAssertEqual(report.duplicateGroups[0].reclaimableBytes, Int64(Data("same audio bytes".utf8).count))
     }
 
     func testCollectionSummaryOmitsBlankMetadata() {

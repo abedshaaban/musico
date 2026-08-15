@@ -12,6 +12,7 @@ struct EditItemSheet: View {
     @State private var genre: String
     @State private var year: String
     @State private var trackNumber: String
+    @State private var tags: String
 
     init(item: LibraryItem) {
         self.item = item
@@ -21,6 +22,7 @@ struct EditItemSheet: View {
         _genre = State(initialValue: item.genre ?? "")
         _year = State(initialValue: item.year.map(String.init) ?? "")
         _trackNumber = State(initialValue: item.trackNumber.map(String.init) ?? "")
+        _tags = State(initialValue: item.tags.joined(separator: ", "))
     }
 
     var body: some View {
@@ -45,6 +47,14 @@ struct EditItemSheet: View {
                             .keyboardType(.numberPad)
                             .musicoFormTextField()
                     }
+                }
+
+                Section("Tags") {
+                    TextField(musicoPrompt: "Workout, favorites, live", text: $tags)
+                        .musicoFormTextField()
+                    Text("Separate tags with commas.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
                 Section("File") {
@@ -87,7 +97,8 @@ struct EditItemSheet: View {
             album: album,
             genre: genre,
             year: parsedYear,
-            trackNumber: parsedTrackNumber
+            trackNumber: parsedTrackNumber,
+            tags: tags.split(separator: ",").map(String.init)
         )
         playback.syncCurrentItem(with: library)
         dismiss()

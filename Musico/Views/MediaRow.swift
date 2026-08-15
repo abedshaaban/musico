@@ -29,7 +29,7 @@ struct MediaRow: View {
                     .font(.subheadline)
                     .foregroundColor(MusicoTheme.secondaryText)
                     .lineLimit(1)
-                if let summary = item.collectionSummary {
+                if let summary = detailSummary {
                     Text(summary)
                         .font(.caption)
                         .foregroundColor(MusicoTheme.secondaryText.opacity(0.82))
@@ -53,4 +53,16 @@ struct MediaRow: View {
         }
         .contentShape(Rectangle())
     }
+
+    private var detailSummary: String? {
+        let tags = item.tags.prefix(3).map { "#\($0)" }.joined(separator: " ")
+        return [item.collectionSummary, tags.isEmpty ? nil : tags]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+            .nilIfEmpty
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

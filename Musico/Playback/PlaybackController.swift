@@ -1,10 +1,12 @@
 import AVFoundation
 import MediaPlayer
+import MediaToolbox
+import QuartzCore
 import UIKit
 
 @MainActor
 final class PlaybackController: ObservableObject {
-    let player = AVPlayer()
+    let player = AVQueuePlayer()
 
     @Published private(set) var currentItem: LibraryItem?
     @Published private(set) var isPlaying = false
@@ -17,10 +19,31 @@ final class PlaybackController: ObservableObject {
             updateNowPlayingInfo()
         }
     }
+    @Published var isNormalizationEnabled = UserDefaults.standard.object(forKey: "playbackNormalization") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isNormalizationEnabled, forKey: "playbackNormalization")
+            applyPlaybackVolume()
+        }
+    }
+    @Published var isGaplessEnabled = UserDefaults.standard.object(forKey: "playbackGapless") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(isGaplessEnabled, forKey: "playbackGapless")
+            prepareNextItemIfNeeded()
+        }
+    }
+    @Published var crossfadeSeconds = UserDefaults.standard.double(forKey: "playbackCrossfade") {
+        didSet {
+            UserDefaults.standard.set(min(max(crossfadeSeconds, 0), 8), forKey: "playbackCrossfade")
+            prepareNextItemIfNeeded()
+        }
+    }
     @Published private(set) var queue: [LibraryItem] = []
     @Published private(set) var currentQueueIndex = 0
     @Published private(set) var sleepTimerRemaining: TimeInterval?
     @Published private(set) var lastPlaybackIssue: String?
+    @Published private(set) var waveformLevel: CGFloat = 0
+    @Published private(set) var waveformFrequency: CGFloat = 220
+    @Published private(set) var hasLiveWaveformData = false
 
     private weak var library: LibraryStore?
     private var cachedFileURL: ((LibraryItem) -> URL)?
@@ -29,6 +52,10 @@ final class PlaybackController: ObservableObject {
     private var statusObservation: NSKeyValueObservation?
     private var errorObservation: NSKeyValueObservation?
     private var timeControlObservation: NSKeyValueObservation?
+    private var activePlayerItem: AVPlayerItem?
+    private var preloadedPlayerItem: AVPlayerItem?
+    private var preloadedLibraryItem: LibraryItem?
+    private var preloadedQueueIndex: Int?
     private var notificationObservers: [NSObjectProtocol] = []
     private var remoteCommandTargets: [(command: MPRemoteCommand, token: Any)] = []
 
@@ -40,6 +67,10 @@ final class PlaybackController: ObservableObject {
 
     private var cachedNowPlayingArtworkKey: String?
     private var cachedNowPlayingArtwork: MPMediaItemArtwork?
+    private var lastResumeSaveAt: TimeInterval = 0
+    private var crossfadeTask: Task<Void, Never>?
+    private var secondaryPlayer: AVPlayer?
+    private var isCrossfading = false
 
     init() {
         player.automaticallyWaitsToMinimizeStalling = true
@@ -55,8 +86,9 @@ final class PlaybackController: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             Task { @MainActor in
-                guard let self, notification.object as? AVPlayerItem === self.player.currentItem else { return }
-                self.playNext()
+                guard let self, let ended = notification.object as? AVPlayerItem,
+                      ended === self.activePlayerItem else { return }
+                self.finishCurrentTrack()
             }
         }
         updateRemoteCommandAvailability()
@@ -65,6 +97,8 @@ final class PlaybackController: ObservableObject {
     deinit {
         sleepTimerTask?.cancel()
         sleepTimerDisplayTask?.cancel()
+        crossfadeTask?.cancel()
+        secondaryPlayer?.pause()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let playbackEndObserver { NotificationCenter.default.removeObserver(playbackEndObserver) }
         notificationObservers.forEach(NotificationCenter.default.removeObserver)
@@ -76,13 +110,21 @@ final class PlaybackController: ObservableObject {
 
     func configure(library: LibraryStore) {
         self.library = library
+        cachedFileURL = library.fileURL
+        restorePersistedPlaybackIfNeeded()
+    }
+
+    func reloadSettings() {
+        isNormalizationEnabled = UserDefaults.standard.object(forKey: "playbackNormalization") as? Bool ?? true
+        isGaplessEnabled = UserDefaults.standard.object(forKey: "playbackGapless") as? Bool ?? true
+        crossfadeSeconds = min(max(UserDefaults.standard.double(forKey: "playbackCrossfade"), 0), 8)
     }
 
     func play(_ item: LibraryItem, from items: [LibraryItem], fileURL: @escaping (LibraryItem) -> URL) {
         queue = items
         currentQueueIndex = items.firstIndex(of: item) ?? 0
         cachedFileURL = fileURL
-        start(item, url: fileURL(item))
+        start(item, url: fileURL(item), resumeAt: item.resumePosition)
     }
 
     func togglePlayback() {
@@ -93,30 +135,47 @@ final class PlaybackController: ObservableObject {
         guard currentItem != nil else { return }
         configureAudioSession(activate: true)
         player.play()
+        applyPlaybackVolume()
         setPlaying(true)
+        persistPlaybackState()
     }
 
     func pausePlayback() {
         guard currentItem != nil else { return }
+        cancelCrossfade()
         player.pause()
         refreshPlaybackProgress()
+        saveResumePosition()
         setPlaying(false)
+        persistPlaybackState()
     }
 
     func stop() {
         player.pause()
-        player.replaceCurrentItem(with: nil)
+        saveResumePosition()
+        player.removeAllItems()
         statusObservation?.invalidate()
         errorObservation?.invalidate()
         currentItem = nil
         isPlaying = false
         elapsed = 0
         duration = 0
+        waveformLevel = 0
+        waveformFrequency = 220
+        hasLiveWaveformData = false
         queue = []
         currentQueueIndex = 0
         cachedFileURL = nil
         cachedNowPlayingArtworkKey = nil
         cachedNowPlayingArtwork = nil
+        activePlayerItem = nil
+        preloadedPlayerItem = nil
+        preloadedLibraryItem = nil
+        preloadedQueueIndex = nil
+        crossfadeTask?.cancel()
+        secondaryPlayer?.pause()
+        secondaryPlayer = nil
+        isCrossfading = false
         cancelSleepTimer()
         updateRemoteCommandAvailability()
 
@@ -124,15 +183,18 @@ final class PlaybackController: ObservableObject {
         center.nowPlayingInfo = nil
         center.playbackState = .stopped
         deactivateAudioSession()
+        try? FileManager.default.removeItem(at: AppPaths.playbackFile)
     }
 
     func seek(to seconds: Double) {
         guard currentItem != nil else { return }
+        cancelCrossfade()
         let upperBound = duration > 0 ? duration : max(seconds, 0)
         let target = min(max(seconds, 0), upperBound)
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
         elapsed = target
         updateNowPlayingInfo()
+        persistPlaybackState()
     }
 
     func skip(by seconds: Double) {
@@ -142,6 +204,7 @@ final class PlaybackController: ObservableObject {
 
     func playNext() {
         guard !queue.isEmpty, let fileURL = cachedFileURL else { return }
+        saveResumePosition()
         if isShuffleEnabled, queue.count > 1 {
             var next = currentQueueIndex
             while next == currentQueueIndex { next = Int.random(in: queue.indices) }
@@ -150,7 +213,7 @@ final class PlaybackController: ObservableObject {
             currentQueueIndex = (currentQueueIndex + 1) % queue.count
         }
         let item = queue[currentQueueIndex]
-        start(item, url: fileURL(item))
+        start(item, url: fileURL(item), resumeAt: item.resumePosition)
     }
 
     func playPrevious() {
@@ -162,29 +225,32 @@ final class PlaybackController: ObservableObject {
         }
         currentQueueIndex = currentQueueIndex == 0 ? queue.count - 1 : currentQueueIndex - 1
         let item = queue[currentQueueIndex]
-        start(item, url: fileURL(item))
+        start(item, url: fileURL(item), resumeAt: item.resumePosition)
     }
 
     func toggleShuffle() {
         isShuffleEnabled.toggle()
+        persistPlaybackState()
     }
 
     func jumpToQueueItem(_ item: LibraryItem) {
         guard let index = queue.firstIndex(of: item), let fileURL = cachedFileURL else { return }
         currentQueueIndex = index
-        start(item, url: fileURL(item))
+        start(item, url: fileURL(item), resumeAt: item.resumePosition)
     }
 
     func moveQueueItem(from source: IndexSet, to destination: Int) {
         guard let current = currentItem else {
             queue.move(fromOffsets: source, toOffset: destination)
             updateRemoteCommandAvailability()
+            persistPlaybackState()
             return
         }
         queue.move(fromOffsets: source, toOffset: destination)
         currentQueueIndex = queue.firstIndex(of: current) ?? currentQueueIndex
         updateRemoteCommandAvailability()
         updateNowPlayingInfo()
+        persistPlaybackState()
     }
 
     func removeFromQueue(at offsets: IndexSet) {
@@ -200,7 +266,7 @@ final class PlaybackController: ObservableObject {
                 }
                 currentQueueIndex = min(index, queue.count - 1)
                 if let fileURL = cachedFileURL {
-                    start(queue[currentQueueIndex], url: fileURL(queue[currentQueueIndex]))
+                    start(queue[currentQueueIndex], url: fileURL(queue[currentQueueIndex]), resumeAt: queue[currentQueueIndex].resumePosition)
                 }
             } else if index < currentQueueIndex {
                 currentQueueIndex -= 1
@@ -208,6 +274,7 @@ final class PlaybackController: ObservableObject {
         }
         updateRemoteCommandAvailability()
         updateNowPlayingInfo()
+        persistPlaybackState()
     }
 
     func syncCurrentItem(with library: LibraryStore) {
@@ -223,6 +290,19 @@ final class PlaybackController: ObservableObject {
         cachedNowPlayingArtworkKey = nil
         cachedNowPlayingArtwork = nil
         updateNowPlayingInfo()
+    }
+
+    func reconcile(with library: LibraryStore) {
+        let validIDs = Set(library.items.map(\.id))
+        queue = queue.compactMap { queued in library.items.first(where: { $0.id == queued.id }) }
+        guard let current = currentItem else { persistPlaybackState(); return }
+        guard validIDs.contains(current.id), let updated = library.items.first(where: { $0.id == current.id }) else {
+            stop()
+            return
+        }
+        currentItem = updated
+        currentQueueIndex = queue.firstIndex(where: { $0.id == updated.id }) ?? 0
+        persistPlaybackState()
     }
 
     func startSleepTimer(minutes: Int) {
@@ -263,28 +343,80 @@ final class PlaybackController: ObservableObject {
 
     // MARK: - Playback setup
 
-    private func start(_ item: LibraryItem, url: URL) {
-        configureAudioSession(activate: true)
+    private func start(
+        _ item: LibraryItem,
+        url: URL,
+        autoplay: Bool = true,
+        resumeAt: Double = 0,
+        recordPlay: Bool = true
+    ) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            lastPlaybackIssue = "The media file is missing. Open Library Maintenance to remove or repair its record."
+            return
+        }
+        if autoplay { configureAudioSession(activate: true) }
+        crossfadeTask?.cancel()
+        secondaryPlayer?.pause()
+        secondaryPlayer = nil
+        isCrossfading = false
+        player.volume = 1
         currentItem = item
         elapsed = 0
         duration = 0
+        waveformLevel = 0
+        waveformFrequency = 220
+        hasLiveWaveformData = false
         lastPlaybackIssue = nil
         statusObservation?.invalidate()
         errorObservation?.invalidate()
         cachedNowPlayingArtworkKey = nil
         cachedNowPlayingArtwork = nil
 
-        library?.recordPlayed(item.id)
-        let playerItem = AVPlayerItem(url: url)
-        player.replaceCurrentItem(with: playerItem)
+        if recordPlay { library?.recordPlayed(item.id) }
+        let playerItem = makePlayerItem(for: item, url: url)
+        player.removeAllItems()
+        player.insert(playerItem, after: nil)
+        activePlayerItem = playerItem
+        preloadedPlayerItem = nil
+        preloadedLibraryItem = nil
+        preloadedQueueIndex = nil
+        observe(playerItem, for: item, resumeAt: resumeAt)
+        applyPlaybackVolume()
+        if autoplay { player.play() } else { player.pause() }
+        isPlaying = autoplay
+        updateRemoteCommandAvailability()
+        updateNowPlayingInfo()
+        persistPlaybackState()
+    }
 
+    private func makePlayerItem(for item: LibraryItem, url: URL) -> AVPlayerItem {
+        let playerItem = AVPlayerItem(url: url)
+        playerItem.audioMix = PlaybackAudioTap.makeAudioMix(for: playerItem.asset) { [weak self] level, frequency in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.currentItem?.id == item.id else { return }
+                self.waveformLevel = CGFloat(level)
+                self.waveformFrequency = CGFloat(frequency)
+                self.hasLiveWaveformData = true
+            }
+        }
+        return playerItem
+    }
+
+    private func observe(_ playerItem: AVPlayerItem, for item: LibraryItem, resumeAt: Double = 0) {
+        statusObservation?.invalidate()
+        errorObservation?.invalidate()
         statusObservation = playerItem.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
-                guard let self, item === self.player.currentItem else { return }
+                guard let self, item === self.activePlayerItem else { return }
                 switch item.status {
                 case .readyToPlay:
                     self.lastPlaybackIssue = nil
                     self.refreshPlaybackProgress()
+                    if resumeAt > 0.1, resumeAt < self.duration - 5 {
+                        self.player.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
+                        self.elapsed = resumeAt
+                    }
+                    self.prepareNextItemIfNeeded()
                     self.updateNowPlayingInfo()
                 case .failed:
                     self.lastPlaybackIssue = item.error?.localizedDescription ?? "Playback failed."
@@ -296,15 +428,171 @@ final class PlaybackController: ObservableObject {
         }
         errorObservation = playerItem.observe(\.error, options: [.new]) { [weak self] item, _ in
             Task { @MainActor in
-                guard let self, item === self.player.currentItem else { return }
+                guard let self, item === self.activePlayerItem else { return }
                 self.lastPlaybackIssue = item.error?.localizedDescription
             }
         }
+    }
 
-        player.play()
-        isPlaying = true
-        updateRemoteCommandAvailability()
-        updateNowPlayingInfo()
+    private func finishCurrentTrack() {
+        if let currentItem {
+            library?.updateResumePosition(itemID: currentItem.id, seconds: 0, duration: duration, completed: true)
+        }
+        if let preloadedPlayerItem,
+           player.currentItem === preloadedPlayerItem,
+           let next = preloadedLibraryItem,
+           let nextIndex = preloadedQueueIndex {
+            currentItem = next
+            currentQueueIndex = nextIndex
+            activePlayerItem = preloadedPlayerItem
+            self.preloadedPlayerItem = nil
+            preloadedLibraryItem = nil
+            preloadedQueueIndex = nil
+            elapsed = 0
+            duration = 0
+            library?.recordPlayed(next.id)
+            observe(preloadedPlayerItem, for: next)
+            applyPlaybackVolume()
+            prepareNextItemIfNeeded()
+            updateRemoteCommandAvailability()
+            updateNowPlayingInfo()
+            persistPlaybackState()
+        } else if !isCrossfading {
+            playNext()
+        }
+    }
+
+    private func nextQueueIndex() -> Int? {
+        guard queue.count > 1 else { return nil }
+        if isShuffleEnabled {
+            var index = currentQueueIndex
+            while index == currentQueueIndex { index = Int.random(in: queue.indices) }
+            return index
+        }
+        return (currentQueueIndex + 1) % queue.count
+    }
+
+    private func prepareNextItemIfNeeded() {
+        if let preloadedPlayerItem {
+            player.remove(preloadedPlayerItem)
+            self.preloadedPlayerItem = nil
+            preloadedLibraryItem = nil
+            preloadedQueueIndex = nil
+        }
+        guard isGaplessEnabled, crossfadeSeconds == 0,
+              currentItem?.kind == .audio,
+              let nextIndex = nextQueueIndex(), queue.indices.contains(nextIndex),
+              queue[nextIndex].kind == .audio,
+              let fileURL = cachedFileURL else { return }
+        let next = queue[nextIndex]
+        let url = fileURL(next)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        let item = makePlayerItem(for: next, url: url)
+        player.insert(item, after: activePlayerItem)
+        preloadedPlayerItem = item
+        preloadedLibraryItem = next
+        preloadedQueueIndex = nextIndex
+    }
+
+    private func beginCrossfadeIfNeeded() {
+        guard !isCrossfading, crossfadeSeconds > 0, isPlaying,
+              let currentItem, currentItem.kind == .audio,
+              duration > crossfadeSeconds,
+              duration - elapsed <= crossfadeSeconds + 0.25,
+              let nextIndex = nextQueueIndex(), queue.indices.contains(nextIndex),
+              queue[nextIndex].kind == .audio,
+              let fileURL = cachedFileURL else { return }
+        let next = queue[nextIndex]
+        let url = fileURL(next)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+
+        isCrossfading = true
+        let outgoingGain = playbackVolume(for: currentItem)
+        let incomingGain = playbackVolume(for: next)
+        let incoming = AVPlayer(url: url)
+        incoming.volume = 0
+        secondaryPlayer = incoming
+        incoming.play()
+
+        let seconds = crossfadeSeconds
+        crossfadeTask = Task { [weak self] in
+            let steps = max(Int(seconds * 10), 1)
+            for step in 1...steps {
+                guard let self, !Task.isCancelled else { return }
+                let progress = Float(step) / Float(steps)
+                self.player.volume = outgoingGain * (1 - progress)
+                incoming.volume = incomingGain * progress
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            guard let self, !Task.isCancelled else { return }
+            let carriedTime = incoming.currentTime().seconds
+            incoming.pause()
+            self.secondaryPlayer = nil
+            self.crossfadeTask = nil
+            self.isCrossfading = false
+            self.library?.updateResumePosition(itemID: currentItem.id, seconds: 0, duration: self.duration, completed: true)
+            self.currentQueueIndex = nextIndex
+            self.start(next, url: url, resumeAt: carriedTime.isFinite ? carriedTime : 0)
+        }
+    }
+
+    private func playbackVolume(for item: LibraryItem) -> Float {
+        guard isNormalizationEnabled, let gain = item.normalizationGainDB else { return 1 }
+        return Float(min(max(pow(10, gain / 20), 0.2), 1))
+    }
+
+    private func applyPlaybackVolume() {
+        guard let currentItem, !isCrossfading else { return }
+        player.volume = playbackVolume(for: currentItem)
+    }
+
+    private func cancelCrossfade() {
+        crossfadeTask?.cancel()
+        crossfadeTask = nil
+        secondaryPlayer?.pause()
+        secondaryPlayer = nil
+        isCrossfading = false
+        applyPlaybackVolume()
+    }
+
+    private func saveResumePosition() {
+        guard let currentItem else { return }
+        library?.updateResumePosition(itemID: currentItem.id, seconds: elapsed, duration: duration)
+    }
+
+    private func persistPlaybackState() {
+        guard let currentItem else { return }
+        AppPaths.ensureDirectories()
+        do {
+            let state = PersistedPlaybackState(
+                queueIDs: queue.map(\.id),
+                currentItemID: currentItem.id,
+                currentQueueIndex: currentQueueIndex,
+                elapsed: elapsed,
+                isShuffleEnabled: isShuffleEnabled
+            )
+            try JSONEncoder.musico.encode(state).write(to: AppPaths.playbackFile, options: .atomic)
+        } catch {
+            lastPlaybackIssue = "The playback queue could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    private func restorePersistedPlaybackIfNeeded() {
+        guard currentItem == nil, let library,
+              let data = try? Data(contentsOf: AppPaths.playbackFile),
+              let state = try? JSONDecoder.musico.decode(PersistedPlaybackState.self, from: data) else { return }
+        let restoredQueue = state.queueIDs.compactMap { id in library.items.first(where: { $0.id == id && !library.isMissing($0) }) }
+        guard !restoredQueue.isEmpty else {
+            try? FileManager.default.removeItem(at: AppPaths.playbackFile)
+            return
+        }
+        queue = restoredQueue
+        isShuffleEnabled = state.isShuffleEnabled
+        currentQueueIndex = restoredQueue.firstIndex(where: { $0.id == state.currentItemID })
+            ?? min(max(state.currentQueueIndex, 0), restoredQueue.count - 1)
+        let item = restoredQueue[currentQueueIndex]
+        start(item, url: library.fileURL(for: item), autoplay: false,
+              resumeAt: max(state.elapsed, item.resumePosition), recordPlay: false)
     }
 
     private func configureAudioSession(activate: Bool) {
@@ -352,6 +640,13 @@ final class PlaybackController: ObservableObject {
         } else {
             duration = newDuration
         }
+        let wholeSecond = floor(elapsed)
+        if wholeSecond - lastResumeSaveAt >= 10 {
+            lastResumeSaveAt = wholeSecond
+            saveResumePosition()
+            persistPlaybackState()
+        }
+        beginCrossfadeIfNeeded()
     }
 
     private func observePlayerState() {
@@ -404,6 +699,8 @@ final class PlaybackController: ObservableObject {
     private func applicationDidEnterBackground() {
         isApplicationActive = false
         refreshPlaybackProgress()
+        saveResumePosition()
+        persistPlaybackState()
         updateRemoteCommandAvailability()
         updateNowPlayingInfo()
         removeTimeObserver()
@@ -426,6 +723,7 @@ final class PlaybackController: ObservableObject {
         switch type {
         case .began:
             wasPlayingBeforeInterruption = isPlaying
+            cancelCrossfade()
             player.pause()
             refreshPlaybackProgress()
             setPlaying(false)
@@ -548,6 +846,7 @@ final class PlaybackController: ObservableObject {
             return
         }
         isPlaying = playing
+        if !playing { waveformLevel = 0 }
         updateNowPlayingInfo()
     }
 
@@ -591,5 +890,146 @@ final class PlaybackController: ObservableObject {
         let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         cachedNowPlayingArtwork = artwork
         return artwork
+    }
+}
+
+// MARK: - Audio-reactive waveform analysis
+
+/// Reads the decoded PCM that is already passing through `AVPlayer`, without
+/// changing it, and publishes a lightweight level/frequency estimate for the UI.
+private enum PlaybackAudioTap {
+    static func makeAudioMix(
+        for asset: AVAsset,
+        onAnalysis: @escaping (Float, Float) -> Void
+    ) -> AVAudioMix? {
+        guard let track = asset.tracks(withMediaType: .audio).first else { return nil }
+
+        let context = PlaybackAudioTapContext(onAnalysis: onAnalysis)
+        let retainedContext = Unmanaged.passRetained(context).toOpaque()
+        var callbacks = MTAudioProcessingTapCallbacks(
+            version: kMTAudioProcessingTapCallbacksVersion_0,
+            clientInfo: retainedContext,
+            init: { _, clientInfo, storageOut in
+                storageOut.pointee = clientInfo
+            },
+            finalize: { tap in
+                let storage = MTAudioProcessingTapGetStorage(tap)
+                Unmanaged<PlaybackAudioTapContext>.fromOpaque(storage).release()
+            },
+            prepare: { tap, _, format in
+                let storage = MTAudioProcessingTapGetStorage(tap)
+                let context = Unmanaged<PlaybackAudioTapContext>.fromOpaque(storage).takeUnretainedValue()
+                context.prepare(format: format.pointee)
+            },
+            unprepare: nil,
+            process: { tap, frameCount, _, bufferList, framesOut, flagsOut in
+                let status = MTAudioProcessingTapGetSourceAudio(
+                    tap,
+                    frameCount,
+                    bufferList,
+                    flagsOut,
+                    nil,
+                    framesOut
+                )
+                guard status == noErr,
+                      framesOut.pointee > 0 else { return }
+                let storage = MTAudioProcessingTapGetStorage(tap)
+                let context = Unmanaged<PlaybackAudioTapContext>.fromOpaque(storage).takeUnretainedValue()
+                context.analyze(bufferList: bufferList, frameCount: framesOut.pointee)
+            }
+        )
+
+        var tap: MTAudioProcessingTap?
+        let status = MTAudioProcessingTapCreate(
+            kCFAllocatorDefault,
+            &callbacks,
+            kMTAudioProcessingTapCreationFlag_PreEffects,
+            &tap
+        )
+        guard status == noErr, let tap else {
+            Unmanaged<PlaybackAudioTapContext>.fromOpaque(retainedContext).release()
+            return nil
+        }
+
+        let parameters = AVMutableAudioMixInputParameters(track: track)
+        parameters.audioTapProcessor = tap
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = [parameters]
+        return mix
+    }
+}
+
+private final class PlaybackAudioTapContext {
+    private let onAnalysis: (Float, Float) -> Void
+    private var format = AudioStreamBasicDescription()
+    private var smoothedLevel: Float = 0
+    private var smoothedFrequency: Float = 220
+    private var lastPublishTime: CFTimeInterval = 0
+
+    init(onAnalysis: @escaping (Float, Float) -> Void) {
+        self.onAnalysis = onAnalysis
+    }
+
+    func prepare(format: AudioStreamBasicDescription) {
+        self.format = format
+        smoothedLevel = 0
+        smoothedFrequency = 220
+        lastPublishTime = 0
+    }
+
+    func analyze(bufferList: UnsafeMutablePointer<AudioBufferList>, frameCount: CMItemCount) {
+        let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+        guard let buffer = buffers.first, let data = buffer.mData else { return }
+
+        let isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
+        let isSignedInteger = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
+        let isInterleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
+        let channelStride = isInterleaved ? max(Int(buffer.mNumberChannels), 1) : 1
+        let requestedFrames = max(Int(frameCount), 0)
+
+        var sumSquares: Float = 0
+        var crossingCount = 0
+        var previousSample: Float = 0
+        var analyzedFrames = 0
+
+        if isFloat, format.mBitsPerChannel == 32 {
+            let samples = data.assumingMemoryBound(to: Float.self)
+            let availableSamples = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+            analyzedFrames = min(requestedFrames, availableSamples / channelStride)
+            for frame in 0..<analyzedFrames {
+                let sample = samples[frame * channelStride]
+                sumSquares += sample * sample
+                if frame > 0, (sample >= 0) != (previousSample >= 0) { crossingCount += 1 }
+                previousSample = sample
+            }
+        } else if isSignedInteger, format.mBitsPerChannel == 16 {
+            let samples = data.assumingMemoryBound(to: Int16.self)
+            let availableSamples = Int(buffer.mDataByteSize) / MemoryLayout<Int16>.size
+            analyzedFrames = min(requestedFrames, availableSamples / channelStride)
+            for frame in 0..<analyzedFrames {
+                let sample = Float(samples[frame * channelStride]) / Float(Int16.max)
+                sumSquares += sample * sample
+                if frame > 0, (sample >= 0) != (previousSample >= 0) { crossingCount += 1 }
+                previousSample = sample
+            }
+        }
+
+        guard analyzedFrames > 0 else { return }
+        let rms = sqrt(sumSquares / Float(analyzedFrames))
+        let decibels = 20 * log10(max(rms, 0.000_1))
+        let normalizedLevel = min(max((decibels + 48) / 42, 0), 1)
+        smoothedLevel = (smoothedLevel * 0.68) + (normalizedLevel * 0.32)
+
+        if crossingCount > 1, format.mSampleRate > 0 {
+            let estimatedFrequency = Float(crossingCount) * Float(format.mSampleRate)
+                / (2 * Float(analyzedFrames))
+            let clampedFrequency = min(max(estimatedFrequency, 55), 4_000)
+            smoothedFrequency = (smoothedFrequency * 0.82) + (clampedFrequency * 0.18)
+        }
+
+        let now = CACurrentMediaTime()
+        guard now - lastPublishTime >= 1.0 / 20.0 else { return }
+        lastPublishTime = now
+        onAnalysis(smoothedLevel, smoothedFrequency)
     }
 }

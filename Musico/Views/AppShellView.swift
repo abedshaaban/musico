@@ -10,18 +10,19 @@ private enum AppTab: Hashable {
 struct AppShellView: View {
     @EnvironmentObject private var playback: PlaybackController
     @State private var selectedTab: AppTab = .library
+    @State private var dismissedMiniPlayerItemID: UUID?
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            AddView()
+            tabContent(AddView())
                 .tabItem { Label("Add", systemImage: "plus.circle") }
                 .tag(AppTab.add)
 
-            DownloadsView()
+            tabContent(DownloadsView())
                 .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
                 .tag(AppTab.downloads)
 
-            LibraryView()
+            tabContent(LibraryView())
                 .tabItem { Label("Library", systemImage: "music.note.list") }
                 .tag(AppTab.library)
 
@@ -31,14 +32,23 @@ struct AppShellView: View {
         }
         .accentColor(MusicoTheme.magenta)
         .background(MusicoTheme.background.ignoresSafeArea())
-        .safeAreaInset(edge: .bottom, spacing: 8) {
-            if playback.currentItem != nil, selectedTab != .nowPlaying {
-                MiniPlayerBar {
-                    selectedTab = .nowPlaying
-                }
+        .onChange(of: playback.currentItem?.id) { itemID in
+            if itemID == nil {
+                dismissedMiniPlayerItemID = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func tabContent<Content: View>(_ content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 8) {
+            if let item = playback.currentItem,
+               item.id != dismissedMiniPlayerItemID {
+                MiniPlayerBar(
+                    onOpenNowPlaying: { selectedTab = .nowPlaying },
+                    onDismiss: { dismissedMiniPlayerItemID = item.id }
+                )
                 .padding(.horizontal, 10)
-            } else {
-                EmptyView()
             }
         }
     }

@@ -208,6 +208,7 @@ struct BackupTransferView: View {
                     )
                 }.value
                 MusicoBackupService.applyPreferences(manifest.preferences)
+                playback.reloadSettings()
                 library.reloadAfterRestore()
                 statusMessage = "Restored \(library.items.count) items from \(manifest.createdAt.formatted(date: .abbreviated, time: .shortened))."
             } catch {

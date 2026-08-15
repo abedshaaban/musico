@@ -3,8 +3,8 @@ import UIKit
 
 struct MiniPlayerBar: View {
     @EnvironmentObject private var playback: PlaybackController
-    @EnvironmentObject private var library: LibraryStore
     let onOpenNowPlaying: () -> Void
+    let onDismiss: () -> Void
 
     var body: some View {
         if let item = playback.currentItem {
@@ -53,6 +53,16 @@ struct MiniPlayerBar: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
+
+                    Button(action: onDismiss) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(MusicoTheme.secondaryText)
+                            .frame(width: 32, height: 38)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Hide mini player")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)

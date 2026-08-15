@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 import UIKit
@@ -66,9 +67,27 @@ final class LibraryStore: ObservableObject {
     func recordPlayed(_ itemID: UUID) {
         recentlyPlayedIDs.removeAll { $0 == itemID }
         recentlyPlayedIDs.insert(itemID, at: 0)
-        if recentlyPlayedIDs.count > 30 {
-            recentlyPlayedIDs = Array(recentlyPlayedIDs.prefix(30))
+        if recentlyPlayedIDs.count > 100 {
+            recentlyPlayedIDs = Array(recentlyPlayedIDs.prefix(100))
         }
+        if let index = items.firstIndex(where: { $0.id == itemID }) {
+            items[index].playCount += 1
+            items[index].lastPlayedAt = Date()
+        }
+        save()
+    }
+
+    func clearPlaybackHistory() {
+        recentlyPlayedIDs = []
+        save()
+    }
+
+    func updateResumePosition(itemID: UUID, seconds: Double, duration: Double, completed: Bool = false) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        let shouldClear = completed || seconds < 30 || (duration > 0 && duration - seconds < 30)
+        let position = shouldClear ? 0 : seconds
+        guard abs(items[index].resumePosition - position) >= 2 else { return }
+        items[index].resumePosition = position
         save()
     }
 
@@ -93,7 +112,38 @@ final class LibraryStore: ObservableObject {
                 }
                 return artistCompare == .orderedAscending
             }
+        case .album:
+            return filtered.sorted { optionalText($0.album, fallback: $0.title) < optionalText($1.album, fallback: $1.title) }
+        case .year:
+            return filtered.sorted { ($0.year ?? Int.min, $0.title.lowercased()) > ($1.year ?? Int.min, $1.title.lowercased()) }
+        case .genre:
+            return filtered.sorted { optionalText($0.genre, fallback: $0.title) < optionalText($1.genre, fallback: $1.title) }
+        case .fileSize:
+            return filtered.sorted {
+                let left = fileSize(for: $0)
+                let right = fileSize(for: $1)
+                return left == right ? $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending : left > right
+            }
+        case .playCount:
+            return filtered.sorted {
+                $0.playCount == $1.playCount
+                    ? $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                    : $0.playCount > $1.playCount
+            }
         }
+    }
+
+    private func optionalText(_ value: String?, fallback: String) -> String {
+        (value?.isEmpty == false ? value! : "\u{10FFFF}\(fallback)").lowercased()
+    }
+
+    func fileSize(for item: LibraryItem) -> Int64 {
+        let values = try? fileURL(for: item).resourceValues(forKeys: [.fileAllocatedSizeKey, .fileSizeKey])
+        return Int64(values?.fileAllocatedSize ?? values?.fileSize ?? 0)
+    }
+
+    func isMissing(_ item: LibraryItem) -> Bool {
+        !FileManager.default.fileExists(atPath: fileURL(for: item).path)
     }
 
     func importFiles(_ sourceURLs: [URL]) async {
@@ -165,7 +215,8 @@ final class LibraryStore: ObservableObject {
                             localFilename: storedName,
                             originalFilename: originalName,
                             addedAt: Date(),
-                            artworkFilename: artworkFilename
+                            artworkFilename: artworkFilename,
+                            normalizationGainDB: metadata.replayGainDB
                         )
                     )
                 }
@@ -216,7 +267,8 @@ final class LibraryStore: ObservableObject {
             localFilename: storedFilename,
             originalFilename: originalFilename,
             addedAt: Date(),
-            artworkFilename: artworkFilename
+            artworkFilename: artworkFilename,
+            normalizationGainDB: metadata.replayGainDB
         )
         items.insert(item, at: 0)
         items.sort { $0.addedAt > $1.addedAt }
@@ -278,7 +330,8 @@ final class LibraryStore: ObservableObject {
         album: String?,
         genre: String?,
         year: Int?,
-        trackNumber: Int?
+        trackNumber: Int?,
+        tags: [String]? = nil
     ) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -288,7 +341,36 @@ final class LibraryStore: ObservableObject {
         items[index].genre = Self.cleanedOptional(genre)
         items[index].year = year
         items[index].trackNumber = trackNumber
+        if let tags { items[index].tags = Self.cleanedTags(tags) }
         registerArtist(cleanedArtist)
+        save()
+    }
+
+    private static func cleanedTags(_ tags: [String]) -> [String] {
+        var result: [String] = []
+        for tag in tags {
+            let cleaned = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty,
+                  !result.contains(where: { $0.caseInsensitiveCompare(cleaned) == .orderedSame }) else { continue }
+            result.append(cleaned)
+        }
+        return result.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    func bulkUpdate(
+        itemIDs: Set<UUID>, artist: String?, album: String?, genre: String?,
+        year: Int?, tags: [String]?, replaceTags: Bool
+    ) {
+        guard !itemIDs.isEmpty else { return }
+        for index in items.indices where itemIDs.contains(items[index].id) {
+            if let artist = Self.cleanedOptional(artist) { items[index].artist = artist; registerArtist(artist) }
+            if let album = Self.cleanedOptional(album) { items[index].album = album }
+            if let genre = Self.cleanedOptional(genre) { items[index].genre = genre }
+            if let year { items[index].year = year }
+            if let tags {
+                items[index].tags = Self.cleanedTags(replaceTags ? tags : items[index].tags + tags)
+            }
+        }
         save()
     }
 
@@ -448,6 +530,79 @@ final class LibraryStore: ObservableObject {
         return result
     }
 
+    func maintenanceReport() async -> LibraryMaintenanceReport {
+        let snapshot = items
+        return await Task.detached(priority: .utility) {
+            LibraryMaintenanceScanner.scan(items: snapshot, mediaDirectory: AppPaths.media)
+        }.value
+    }
+
+    func removeMissingRecords() {
+        let missingIDs = Set(items.filter(isMissing).map(\.id))
+        guard !missingIDs.isEmpty else { return }
+        items.removeAll { missingIDs.contains($0.id) }
+        recentlyPlayedIDs.removeAll { missingIDs.contains($0) }
+        for index in playlists.indices { playlists[index].itemIDs.removeAll { missingIDs.contains($0) } }
+        save()
+    }
+
+    @discardableResult
+    func repairMissingItem(itemID: UUID, from sourceURL: URL) async -> Bool {
+        guard let item = items.first(where: { $0.id == itemID }), isMissing(item) else { return false }
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer { if accessed { sourceURL.stopAccessingSecurityScopedResource() } }
+        let destination = fileURL(for: item)
+        let staging = AppPaths.media.appendingPathComponent("repair-\(UUID().uuidString).tmp")
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.createDirectory(at: AppPaths.media, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: sourceURL, to: staging)
+            }.value
+            guard await MediaMetadataExtractor.isPlayable(staging) else {
+                try? FileManager.default.removeItem(at: staging)
+                lastError = "The selected replacement is not a playable audio or video file."
+                return false
+            }
+            try FileManager.default.moveItem(at: staging, to: destination)
+            _ = await rescanEmbeddedMetadata(itemIDs: Set([itemID]))
+            return true
+        } catch {
+            try? FileManager.default.removeItem(at: staging)
+            lastError = "The missing file could not be repaired: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func removeDuplicates(keeping keepIDs: Set<UUID>, from report: LibraryMaintenanceReport) {
+        let duplicateIDs = Set(report.duplicateGroups.flatMap(\.items).map(\.id))
+        let removals = items.filter { duplicateIDs.contains($0.id) && !keepIDs.contains($0.id) }
+        removals.forEach(delete)
+    }
+
+    @discardableResult
+    func rescanEmbeddedMetadata(itemIDs: Set<UUID>? = nil) async -> Int {
+        let targets = items.filter { itemIDs == nil || itemIDs!.contains($0.id) }.filter { !isMissing($0) }
+        var changed = 0
+        for target in targets {
+            let metadata = await MediaMetadataExtractor.extract(from: fileURL(for: target))
+            guard let index = items.firstIndex(where: { $0.id == target.id }) else { continue }
+            let before = items[index]
+            if (before.title == "Untitled" || before.title.isEmpty), let value = metadata.title, !value.isEmpty { items[index].title = value }
+            if before.artist == "Unknown Artist", let value = metadata.artist, !value.isEmpty { items[index].artist = value }
+            if let value = metadata.album { items[index].album = value }
+            if let value = metadata.genre { items[index].genre = value }
+            if let value = metadata.year { items[index].year = value }
+            if let value = metadata.trackNumber { items[index].trackNumber = value }
+            if let value = metadata.replayGainDB { items[index].normalizationGainDB = value }
+            if items[index].artworkFilename == nil, let data = metadata.artworkData {
+                items[index].artworkFilename = try? MediaMetadataExtractor.saveArtwork(data, to: AppPaths.artwork)
+            }
+            if items[index] != before { changed += 1 }
+        }
+        if changed > 0 { clearArtworkCache(); save() }
+        return changed
+    }
+
     private func downloadArtwork(from url: URL) async -> String? {
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
@@ -466,7 +621,8 @@ final class LibraryStore: ObservableObject {
             guard FileManager.default.fileExists(atPath: AppPaths.libraryFile.path) else { return }
             let data = try Data(contentsOf: AppPaths.libraryFile)
             let persisted = try JSONDecoder.musico.decode(PersistedLibrary.self, from: data)
-            items = persisted.items.filter { FileManager.default.fileExists(atPath: fileURL(for: $0).path) }
+            // Keep missing records so Library Maintenance can repair or remove them.
+            items = persisted.items
             playlists = persisted.playlists
             recentlyPlayedIDs = persisted.recentlyPlayedIDs.filter { id in
                 items.contains(where: { $0.id == id })
@@ -537,6 +693,104 @@ struct StorageCleanupResult: Equatable {
     var removedFiles: Int
     var reclaimedBytes: Int64
     var errors: [String]
+}
+
+struct LibraryMaintenanceReport: Equatable {
+    struct MissingItem: Identifiable, Equatable {
+        let id: UUID
+        let title: String
+        let filename: String
+    }
+
+    struct DuplicateItem: Identifiable, Equatable {
+        let id: UUID
+        let title: String
+        let artist: String
+        let bytes: Int64
+        let addedAt: Date
+    }
+
+    struct DuplicateGroup: Identifiable, Equatable {
+        let id: String
+        let items: [DuplicateItem]
+        let bytesPerFile: Int64
+
+        var reclaimableBytes: Int64 { bytesPerFile * Int64(max(items.count - 1, 0)) }
+        var suggestedKeepID: UUID? {
+            items.sorted {
+                if $0.addedAt != $1.addedAt { return $0.addedAt < $1.addedAt }
+                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }.first?.id
+        }
+    }
+
+    var missingItems: [MissingItem]
+    var duplicateGroups: [DuplicateGroup]
+
+    static let empty = LibraryMaintenanceReport(missingItems: [], duplicateGroups: [])
+    var duplicateReclaimableBytes: Int64 { duplicateGroups.reduce(0) { $0 + $1.reclaimableBytes } }
+}
+
+enum LibraryMaintenanceScanner {
+    static func scan(
+        items: [LibraryItem],
+        mediaDirectory: URL,
+        fileManager: FileManager = .default
+    ) -> LibraryMaintenanceReport {
+        var missing: [LibraryMaintenanceReport.MissingItem] = []
+        var candidatesBySize: [Int64: [(LibraryItem, URL)]] = [:]
+
+        for item in items {
+            let url = mediaDirectory.appendingPathComponent(item.localFilename)
+            guard fileManager.fileExists(atPath: url.path) else {
+                missing.append(.init(id: item.id, title: item.title, filename: item.originalFilename))
+                continue
+            }
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values?.isRegularFile == true, let size = values?.fileSize else { continue }
+            candidatesBySize[Int64(size), default: []].append((item, url))
+        }
+
+        var groups: [LibraryMaintenanceReport.DuplicateGroup] = []
+        for (size, candidates) in candidatesBySize where candidates.count > 1 {
+            var byDigest: [String: [(LibraryItem, URL)]] = [:]
+            for candidate in candidates {
+                guard let digest = sha256(candidate.1) else { continue }
+                byDigest[digest, default: []].append(candidate)
+            }
+            for (digest, matches) in byDigest where matches.count > 1 {
+                groups.append(.init(
+                    id: digest,
+                    items: matches.map {
+                        .init(id: $0.0.id, title: $0.0.title, artist: $0.0.artist, bytes: size, addedAt: $0.0.addedAt)
+                    },
+                    bytesPerFile: size
+                ))
+            }
+        }
+
+        return LibraryMaintenanceReport(
+            missingItems: missing.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending },
+            duplicateGroups: groups.sorted { $0.reclaimableBytes > $1.reclaimableBytes }
+        )
+    }
+
+    private static func sha256(_ url: URL) -> String? {
+        guard let stream = InputStream(url: url) else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var hasher = SHA256()
+        let capacity = 256 * 1024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let count = stream.read(buffer, maxLength: capacity)
+            if count < 0 { return nil }
+            if count == 0 { break }
+            hasher.update(data: Data(bytes: buffer, count: count))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 enum LibraryStorageScanner {
