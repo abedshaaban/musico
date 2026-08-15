@@ -5,8 +5,13 @@ struct NowPlayingView: View {
     @EnvironmentObject private var playback: PlaybackController
     @EnvironmentObject private var library: LibraryStore
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("nowPlayingVisualStyle") private var visualStyleRaw = PlayerVisualStyle.vinyl.rawValue
     @State private var isQueuePresented = false
     @State private var isSleepTimerPresented = false
+
+    private var visualStyle: PlayerVisualStyle {
+        PlayerVisualStyle(rawValue: visualStyleRaw) ?? .vinyl
+    }
 
     var body: some View {
         NavigationView {
@@ -14,7 +19,7 @@ struct NowPlayingView: View {
                 if let item = playback.currentItem {
                     VStack(spacing: 24) {
                         mediaArtwork(for: item)
-                            .padding(.horizontal, 24)
+                            .padding(.horizontal, 20)
 
                         VStack(spacing: 5) {
                             Text(item.title)
@@ -108,6 +113,19 @@ struct NowPlayingView: View {
                 ToolbarItem(placement: .primaryAction) {
                     if playback.currentItem != nil {
                         Menu {
+                            Menu("Player Style") {
+                                ForEach(PlayerVisualStyle.allCases) { style in
+                                    Button {
+                                        visualStyleRaw = style.rawValue
+                                    } label: {
+                                        if visualStyle == style {
+                                            Label(style.label, systemImage: style.systemImage)
+                                        } else {
+                                            Text(style.label)
+                                        }
+                                    }
+                                }
+                            }
                             Button { isQueuePresented = true } label: {
                                 Label("Up Next", systemImage: "list.bullet")
                             }
@@ -156,19 +174,12 @@ struct NowPlayingView: View {
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        } else if library.artworkURL(for: item) != nil {
-            LargeMediaArtworkView(item: item)
-        } else if item.kind == .video {
-            LargeMediaArtworkView(item: item)
         } else {
-            ZStack {
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color.secondary.opacity(0.12))
-                    .aspectRatio(1, contentMode: .fit)
-                Image(systemName: "music.note")
-                    .font(.system(size: 82, weight: .light))
-                    .foregroundColor(.secondary)
-            }
+            NowPlayingPlayerVisual(
+                item: item,
+                style: visualStyle,
+                isPlaying: playback.isPlaying
+            )
         }
     }
 

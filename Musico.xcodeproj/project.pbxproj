@@ -26,6 +26,8 @@
 		A10000000000000000000011 /* EditItemSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* EditItemSheet.swift */; };
 		A10000000000000000000012 /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* QueueView.swift */; };
 		A10000000000000000000013 /* ArtistComboField.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* ArtistComboField.swift */; };
+		A10000000000000000000014 /* PlayerVisualStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* PlayerVisualStyle.swift */; };
+		A10000000000000000000015 /* NowPlayingPlayerVisual.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* NowPlayingPlayerVisual.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +52,8 @@
 		B10000000000000000000013 /* EditItemSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditItemSheet.swift; sourceTree = "<group>"; };
 		B10000000000000000000014 /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
 		B10000000000000000000015 /* ArtistComboField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistComboField.swift; sourceTree = "<group>"; };
+		B10000000000000000000016 /* PlayerVisualStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerVisualStyle.swift; sourceTree = "<group>"; };
+		B10000000000000000000017 /* NowPlayingPlayerVisual.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingPlayerVisual.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -95,6 +99,7 @@
 			children = (
 				B10000000000000000000002 /* MediaModels.swift */,
 				B10000000000000000000012 /* MediaMetadataExtractor.swift */,
+				B10000000000000000000016 /* PlayerVisualStyle.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -130,6 +135,7 @@
 				B10000000000000000000013 /* EditItemSheet.swift */,
 				B10000000000000000000014 /* QueueView.swift */,
 				B10000000000000000000015 /* ArtistComboField.swift */,
+				B10000000000000000000017 /* NowPlayingPlayerVisual.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -228,6 +234,8 @@
 				A10000000000000000000011 /* EditItemSheet.swift in Sources */,
 				A10000000000000000000012 /* QueueView.swift in Sources */,
 				A10000000000000000000013 /* ArtistComboField.swift in Sources */,
+				A10000000000000000000014 /* PlayerVisualStyle.swift in Sources */,
+				A10000000000000000000015 /* NowPlayingPlayerVisual.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
