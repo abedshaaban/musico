@@ -34,15 +34,14 @@ enum YouTubeResolver {
     /// Returns the direct stream URL, title, and media kind.
     /// Throws a descriptive error when the video cannot be resolved.
     static func resolve(videoID: String) async throws -> (url: URL, title: String, kind: MediaKind, expectedBytes: Int64) {
-        // Known public YouTube Innertube API key used by the web and mobile clients.
-        let apiKey = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-        let endpoint = URL(string: "https://www.youtube.com/youtubei/v1/player?key=\(apiKey)")!
+        let endpoint = URL(string: "https://www.youtube.com/youtubei/v1/player")!
 
         // Try multiple client configurations in order of reliability.
         let clientConfigs: [[String: Any]] = [
-            ["clientName": "IOS", "clientVersion": "19.09.3", "deviceModel": "iPhone16,2", "userAgent": "com.google.ios.youtube/19.09.3 (iPhone16,2; U; CPU iOS 17_2 like Mac OS X;)", "hl": "en", "gl": "US"],
-            ["clientName": "ANDROID", "clientVersion": "19.09.37", "androidSdkVersion": 30, "hl": "en", "gl": "US"],
-            ["clientName": "WEB", "clientVersion": "2.20240201.01.00", "hl": "en", "gl": "US"]
+            ["clientName": "IOS", "clientVersion": "20.10.4", "deviceModel": "iPhone17,1", "userAgent": "com.google.ios.youtube/20.10.4 (iPhone17,1; U; CPU iOS 18_3_2 like Mac OS X;)", "hl": "en", "gl": "US"],
+            ["clientName": "ANDROID", "clientVersion": "20.10.38", "androidSdkVersion": 34, "hl": "en", "gl": "US"],
+            ["clientName": "WEB", "clientVersion": "2.20250618.01.00", "hl": "en", "gl": "US"],
+            ["clientName": "TVHTML5", "clientVersion": "7.20250618.10.00", "hl": "en", "gl": "US"]
         ]
 
         for clientConfig in clientConfigs {
@@ -56,7 +55,7 @@ enum YouTubeResolver {
             var request = URLRequest(url: endpoint)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("com.google.ios.youtube/19.09.3 (iPhone16,2; U; CPU iOS 17_2 like Mac OS X;)", forHTTPHeaderField: "User-Agent")
+            request.setValue("com.google.ios.youtube/20.10.4 (iPhone17,1; U; CPU iOS 18_3_2 like Mac OS X;)", forHTTPHeaderField: "User-Agent")
             request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
 
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -70,7 +69,9 @@ enum YouTubeResolver {
             if let playability = json["playabilityStatus"] as? [String: Any],
                let status = playability["status"] as? String, status != "OK" {
                 let reason = playability["reason"] as? String ?? "This video is unavailable."
-                throw NSError(domain: "YouTubeResolver", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
+                print("YouTubeResolver: playability status '\(status)' for \(videoID): \(reason)")
+                // Try the next client config before giving up.
+                continue
             }
 
             guard let streamingData = json["streamingData"] as? [String: Any] else { continue }

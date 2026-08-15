@@ -11,10 +11,15 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var duration: Double = 0
     @Published var isShuffleEnabled = false
 
+    /// Last playback error or warning, if any, for UI/debugging.
+    @Published private(set) var lastPlaybackIssue: String?
+
     private var queue: [LibraryItem] = []
     private var currentIndex = 0
     private var timeObserver: Any?
     private var playbackEndObserver: NSObjectProtocol?
+    private var statusObservation: NSKeyValueObservation?
+    private var errorObservation: NSKeyValueObservation?
 
     init() {
         configureAudioSession()
@@ -105,7 +110,33 @@ final class PlaybackController: ObservableObject {
         currentItem = item
         elapsed = 0
         duration = 0
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        lastPlaybackIssue = nil
+        statusObservation?.invalidate()
+        errorObservation?.invalidate()
+
+        let playerItem = AVPlayerItem(url: url)
+        player.replaceCurrentItem(with: playerItem)
+
+        statusObservation = playerItem.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                switch item.status {
+                case .readyToPlay:
+                    self.lastPlaybackIssue = nil
+                case .failed:
+                    self.lastPlaybackIssue = item.error?.localizedDescription ?? "Playback failed."
+                    self.isPlaying = false
+                default:
+                    break
+                }
+            }
+        }
+        errorObservation = playerItem.observe(\.error, options: [.new]) { [weak self] item, _ in
+            Task { @MainActor in
+                self?.lastPlaybackIssue = item.error?.localizedDescription
+            }
+        }
+
         player.play()
         isPlaying = true
         updateNowPlayingInfo()

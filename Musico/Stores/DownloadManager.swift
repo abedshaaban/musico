@@ -36,9 +36,8 @@ final class DownloadManager: NSObject, ObservableObject {
     // refusing early keeps Musico strictly a personal-file player.
     // YouTube is excluded here because it has a dedicated resolver.
     private static let blockedHostFragments = [
-        "ytimg.", "googlevideo.", "soundcloud.",
-        "vimeo.", "tiktok.", "instagram.", "facebook.", "fbcdn.", "dailymotion.",
-        "netflix.", "twitch.", "hulu.", "disneyplus.", "primevideo."
+        "soundcloud.", "vimeo.", "tiktok.", "instagram.", "facebook.", "fbcdn.",
+        "dailymotion.", "netflix.", "twitch.", "hulu.", "disneyplus.", "primevideo."
     ]
 
     override init() {
@@ -403,7 +402,29 @@ extension DownloadManager: URLSessionDownloadDelegate {
             ?? sourceURL.flatMap { SupportedMedia.kind(forExtension: $0.pathExtension) }
             ?? .audio
 
-        let ext = SupportedMedia.fileExtension(for: kind, url: sourceURL ?? location)
+        // YouTube/googlevideo stream URLs are extension-less, so pick a playable
+        // container extension based on the actual MIME type.
+        let ext: String
+        if let sourceURL = sourceURL, !sourceURL.pathExtension.isEmpty,
+           SupportedMedia.kind(forExtension: sourceURL.pathExtension) == kind {
+            ext = sourceURL.pathExtension.lowercased()
+        } else {
+            let mime = SupportedMedia.normalizedMIME(http?.value(forHTTPHeaderField: "Content-Type"))
+            switch (kind, mime) {
+            case (.video, .some("video/mp4")), (.audio, .some("audio/mp4")):
+                ext = "mp4"
+            case (.video, .some("video/webm")), (.audio, .some("audio/webm")):
+                ext = "webm"
+            case (.audio, .some("audio/webm")):
+                ext = "weba"
+            case (.audio, .some("audio/mpeg")), (.audio, .some("audio/mp3")):
+                ext = "mp3"
+            case (.audio, _):
+                ext = "m4a"
+            case (.video, _):
+                ext = "mp4"
+            }
+        }
         let storedName = UUID().uuidString + "." + ext
         let destination = AppPaths.media.appendingPathComponent(storedName)
 

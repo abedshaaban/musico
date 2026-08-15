@@ -61,6 +61,14 @@ struct NowPlayingView: View {
                         .buttonStyle(.plain)
                         .padding(.horizontal)
 
+                        if let issue = playback.lastPlaybackIssue {
+                            Text(issue)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
+
                         Spacer(minLength: 12)
                     }
                     .padding(.top)
