@@ -37,7 +37,7 @@ struct DownloadsView: View {
                                         } label: {
                                             Text("Retry")
                                         }
-                                        .tint(.blue)
+                                        .tint(MusicoTheme.violet)
 
                                         Button(role: .destructive) {
                                             downloads.remove(record)
@@ -55,6 +55,7 @@ struct DownloadsView: View {
                         }
                     }
                     .musicoInsetGroupedListStyle()
+                    .musicoThemedListBackground()
                 }
             }
             .navigationTitle("Downloads")
@@ -71,17 +72,25 @@ struct DownloadsView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 48, weight: .light))
-                .foregroundColor(.secondary)
+            ZStack {
+                Circle()
+                    .fill(MusicoTheme.brandGradient)
+                    .frame(width: 76, height: 76)
+                    .shadow(color: MusicoTheme.magenta.opacity(0.34), radius: 18)
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundColor(.white)
+            }
             Text("No Downloads")
                 .font(.title2.bold())
             Text("Use the Add tab to download a direct audio or video link you're authorized to save.")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(MusicoTheme.secondaryText)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MusicoBackground().ignoresSafeArea())
     }
 }
 
@@ -114,7 +123,7 @@ private struct DownloadRow: View {
                                 .font(.body)
                         }
                         .buttonStyle(.plain)
-                        .foregroundColor(.blue)
+                        .foregroundColor(MusicoTheme.magenta)
                         .accessibilityLabel("Failure details")
                     }
                 }
@@ -122,6 +131,7 @@ private struct DownloadRow: View {
 
             if record.state.isActive {
                 ProgressView(value: record.state == .downloading ? record.progress : 0)
+                    .accentColor(MusicoTheme.magenta)
             }
 
             HStack {
@@ -159,7 +169,7 @@ private struct DownloadRow: View {
         switch record.state {
         case .completed: return .green
         case .failed, .cancelled: return .red
-        case .downloading: return .blue
+        case .downloading: return MusicoTheme.magenta
         case .validating, .queued: return .secondary
         }
     }
@@ -225,6 +235,7 @@ private struct DownloadFailureDetailsView: View {
                     }
                 }
             }
+            .musicoThemedListBackground()
             .navigationTitle("Failure Details")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -11,7 +11,12 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var duration: Double = 0
     @Published var isShuffleEnabled = false
-    @Published var isAudioOnlyMode = false
+    @Published var isAudioOnlyMode = false {
+        didSet {
+            guard isAudioOnlyMode != oldValue else { return }
+            updateNowPlayingInfo()
+        }
+    }
     @Published private(set) var queue: [LibraryItem] = []
     @Published private(set) var currentQueueIndex = 0
     @Published private(set) var sleepTimerRemaining: TimeInterval?
@@ -397,9 +402,10 @@ final class PlaybackController: ObservableObject {
     }
 
     private func applicationDidEnterBackground() {
-        refreshPlaybackProgress()
-        updateNowPlayingInfo()
         isApplicationActive = false
+        refreshPlaybackProgress()
+        updateRemoteCommandAvailability()
+        updateNowPlayingInfo()
         removeTimeObserver()
         sleepTimerDisplayTask?.cancel()
         sleepTimerDisplayTask = nil
@@ -408,6 +414,8 @@ final class PlaybackController: ObservableObject {
     private func applicationDidBecomeActive() {
         isApplicationActive = true
         refreshPlaybackProgress()
+        updateRemoteCommandAvailability()
+        updateNowPlayingInfo()
         installTimeObserverIfNeeded()
         startSleepTimerDisplayUpdatesIfNeeded()
     }
@@ -545,6 +553,12 @@ final class PlaybackController: ObservableObject {
 
     private func updateNowPlayingInfo() {
         guard let currentItem else { return }
+        // Video items continue as audio when Musico is backgrounded. Advertising
+        // them as audio keeps iOS's Lock Screen in the transport-control mode that
+        // matches the app's actual background behavior.
+        let isNowPlayingAudio = currentItem.kind == .audio
+            || isAudioOnlyMode
+            || !isApplicationActive
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: currentItem.title,
             MPMediaItemPropertyArtist: currentItem.artist,
@@ -553,7 +567,7 @@ final class PlaybackController: ObservableObject {
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyPlaybackQueueCount: queue.count,
             MPNowPlayingInfoPropertyPlaybackQueueIndex: currentQueueIndex,
-            MPNowPlayingInfoPropertyMediaType: currentItem.kind == .audio
+            MPNowPlayingInfoPropertyMediaType: isNowPlayingAudio
                 ? MPNowPlayingInfoMediaType.audio.rawValue
                 : MPNowPlayingInfoMediaType.video.rawValue
         ]

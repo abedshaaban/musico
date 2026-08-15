@@ -22,7 +22,7 @@ struct AddView: View {
                             .frame(maxWidth: .infinity)
                             .font(.body.weight(.semibold))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(MusicoBrandButtonStyle())
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                 } header: {
@@ -42,6 +42,7 @@ struct AddView: View {
                 }
             }
             .musicoInsetGroupedListStyle()
+            .musicoThemedListBackground()
             .navigationTitle("Add")
             .sheet(isPresented: $isURLSheetPresented) {
                 AddByURLSheet()
@@ -51,16 +52,19 @@ struct AddView: View {
     }
 
     private var headerView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "square.and.arrow.down.on.square")
-                .font(.system(size: 42, weight: .light))
-                .foregroundColor(.accentColor)
+        VStack(spacing: 8) {
+            MusicoWaveMark(lineWidth: 10)
+                .frame(width: 172, height: 72)
             Text("Add to Your Library")
                 .font(.title2.bold())
+                .foregroundColor(.white)
+            Text("Your music, in motion.")
+                .font(.subheadline)
+                .foregroundColor(MusicoTheme.secondaryText)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
         .textCase(nil)
     }
 }
@@ -103,6 +107,7 @@ struct AddByURLSheet: View {
                     Text("Direct file links (for example .mp3, .m4a, .mp4, or .mov) and YouTube video links are supported. The link must use https.")
                 }
             }
+            .musicoThemedListBackground()
             .navigationTitle("Add from URL")
             .musicoInlineNavigationTitle()
             .toolbar {
@@ -235,7 +240,7 @@ private struct DownloadConfirmationSheet: View {
                             .frame(maxWidth: .infinity)
                             .font(.body.weight(.semibold))
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(MusicoBrandButtonStyle())
                     .disabled(!canConfirm)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
@@ -243,6 +248,7 @@ private struct DownloadConfirmationSheet: View {
                     Text("The download starts only after you tap the button above.")
                 }
             }
+            .musicoThemedListBackground()
             .navigationTitle("Review")
             .musicoInlineNavigationTitle()
             .toolbar {

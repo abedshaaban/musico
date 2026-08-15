@@ -1,5 +1,6 @@
-import AVKit
+import AVFoundation
 import SwiftUI
+import UIKit
 
 struct NowPlayingView: View {
   @EnvironmentObject private var playback: PlaybackController
@@ -15,8 +16,11 @@ struct NowPlayingView: View {
 
   var body: some View {
     NavigationView {
-      Group {
-        if let item = playback.currentItem {
+      ZStack {
+        MusicoBackground(glowAlignment: .top).ignoresSafeArea()
+
+        Group {
+          if let item = playback.currentItem {
           GeometryReader { geometry in
             let layout = NowPlayingLayoutMetrics(
               width: geometry.size.width,
@@ -26,7 +30,17 @@ struct NowPlayingView: View {
             ScrollView(.vertical, showsIndicators: layout.isCompact) {
               VStack(spacing: layout.sectionSpacing) {
                 mediaArtwork(for: item)
-                  .frame(width: layout.artworkWidth)
+                  .frame(
+                    width: shouldShowInlineVideo(for: item)
+                      ? layout.videoWidth
+                      : layout.artworkWidth
+                  )
+                  .background(
+                    MusicoTheme.magenta.opacity(0.16)
+                      .blur(radius: 34)
+                      .padding(22)
+                  )
+                  .shadow(color: MusicoTheme.violet.opacity(0.20), radius: 24, y: 10)
                   .id("\(item.id)-\(visualStyleRaw)")
 
                 VStack(spacing: 5) {
@@ -36,12 +50,12 @@ struct NowPlayingView: View {
                     .minimumScaleFactor(0.82)
                   Text(item.artist)
                     .font(layout.isCompact ? .subheadline : .body)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(MusicoTheme.secondaryText)
                     .lineLimit(1)
                   if let summary = item.collectionSummary {
                     Text(summary)
                       .font(.caption)
-                      .foregroundColor(.secondary)
+                      .foregroundColor(MusicoTheme.secondaryText.opacity(0.84))
                       .lineLimit(1)
                   }
                 }
@@ -52,13 +66,14 @@ struct NowPlayingView: View {
                     Label("Audio Only", systemImage: "waveform")
                       .font(.subheadline)
                   }
+                  .accentColor(MusicoTheme.magenta)
                   .padding(.horizontal, 28)
                 }
 
                 if item.kind == .video && (playback.isAudioOnlyMode || scenePhase != .active) {
                   Label("Audio only — screen off playback enabled", systemImage: "waveform")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(MusicoTheme.secondaryText)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
                 }
@@ -66,7 +81,7 @@ struct NowPlayingView: View {
                 if let sleepLabel = playback.sleepTimerLabel {
                   Label("Sleep in \(sleepLabel)", systemImage: "moon.zzz")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(MusicoTheme.secondaryText)
                 }
 
                 VStack(spacing: layout.scrubberSpacing) {
@@ -77,13 +92,14 @@ struct NowPlayingView: View {
                     ),
                     in: 0...max(playback.duration, 1)
                   )
+                  .accentColor(MusicoTheme.magenta)
                   HStack {
                     Text(format(playback.elapsed))
                     Spacer()
                     Text("−\(format(max(playback.duration - playback.elapsed, 0)))")
                   }
                   .font(.caption.monospacedDigit())
-                  .foregroundColor(.secondary)
+                  .foregroundColor(MusicoTheme.secondaryText)
                 }
                 .padding(.horizontal, layout.scrubberInset)
 
@@ -92,28 +108,39 @@ struct NowPlayingView: View {
                     playback.toggleShuffle()
                   } label: {
                     Image(systemName: "shuffle")
-                      .foregroundColor(playback.isShuffleEnabled ? .accentColor : .secondary)
+                      .foregroundColor(playback.isShuffleEnabled ? MusicoTheme.magenta : MusicoTheme.secondaryText)
                   }
                   Button {
                     playback.playPrevious()
                   } label: {
                     Image(systemName: "backward.fill")
+                      .foregroundColor(.white)
                   }
                   Button {
                     playback.togglePlayback()
                   } label: {
-                    Image(systemName: playback.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                      .font(.system(size: layout.playButtonSize))
+                    ZStack {
+                      Circle().fill(MusicoTheme.brandGradient)
+                      Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: layout.playButtonSize * 0.34, weight: .bold))
+                        .foregroundColor(.white)
+                        .offset(x: playback.isPlaying ? 0 : 1)
+                    }
+                    .frame(width: layout.playButtonSize, height: layout.playButtonSize)
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.20), lineWidth: 1))
+                    .shadow(color: MusicoTheme.magenta.opacity(0.38), radius: 13, y: 6)
                   }
                   Button {
                     playback.playNext()
                   } label: {
                     Image(systemName: "forward.fill")
+                      .foregroundColor(.white)
                   }
                   Button {
                     isQueuePresented = true
                   } label: {
                     Image(systemName: "list.bullet")
+                      .foregroundColor(MusicoTheme.secondaryText)
                   }
                 }
                 .font(layout.isCompact ? .body : .title2)
@@ -144,15 +171,15 @@ struct NowPlayingView: View {
           .onAppear {
             normalizeVisualStyle(for: item)
           }
-        } else {
-          VStack(spacing: 16) {
-            Image(systemName: "play.circle")
-              .font(.system(size: 52, weight: .light))
-              .foregroundColor(.secondary)
-            Text("Nothing Playing")
-              .font(.title2.bold())
-            Text("Choose an item from Library.")
-              .foregroundColor(.secondary)
+          } else {
+            VStack(spacing: 16) {
+              MusicoWaveMark(lineWidth: 10)
+                .frame(width: 190, height: 84)
+              Text("Nothing Playing")
+                .font(.title2.bold())
+              Text("Choose an item from Library.")
+                .foregroundColor(MusicoTheme.secondaryText)
+            }
           }
         }
       }
@@ -219,14 +246,8 @@ struct NowPlayingView: View {
 
   @ViewBuilder
   private func mediaArtwork(for item: LibraryItem) -> some View {
-    let showVideoPlayer =
-      item.kind == .video
-      && visualStyle == .video
-      && !playback.isAudioOnlyMode
-      && scenePhase == .active
-
-    if showVideoPlayer {
-      VideoPlayer(player: playback.player)
+    if shouldShowInlineVideo(for: item) {
+      InlineVideoPlayer(player: playback.player)
         .aspectRatio(16 / 9, contentMode: .fit)
         .background(Color.black)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -237,6 +258,13 @@ struct NowPlayingView: View {
         isPlaying: playback.isPlaying
       )
     }
+  }
+
+  private func shouldShowInlineVideo(for item: LibraryItem) -> Bool {
+    item.kind == .video
+      && visualStyle == .video
+      && !playback.isAudioOnlyMode
+      && scenePhase == .active
   }
 
   private func normalizeVisualStyle(for item: LibraryItem) {
@@ -252,9 +280,48 @@ struct NowPlayingView: View {
   }
 }
 
+/// Displays the player's video without introducing an `AVPlayerViewController`.
+/// The controller used by SwiftUI's `VideoPlayer` owns a competing Now Playing
+/// session and can disable Musico's manually configured Lock Screen commands when
+/// it disappears during a lock/background transition.
+private struct InlineVideoPlayer: UIViewRepresentable {
+  let player: AVPlayer
+
+  func makeUIView(context: Context) -> PlayerLayerView {
+    let view = PlayerLayerView()
+    view.player = player
+    return view
+  }
+
+  func updateUIView(_ view: PlayerLayerView, context: Context) {
+    view.player = player
+  }
+
+  static func dismantleUIView(_ view: PlayerLayerView, coordinator: Void) {
+    view.player = nil
+  }
+}
+
+private final class PlayerLayerView: UIView {
+  override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+  private var playerLayer: AVPlayerLayer {
+    layer as! AVPlayerLayer
+  }
+
+  var player: AVPlayer? {
+    get { playerLayer.player }
+    set {
+      playerLayer.videoGravity = .resizeAspect
+      playerLayer.player = newValue
+    }
+  }
+}
+
 struct NowPlayingLayoutMetrics: Equatable {
   let isCompact: Bool
   let artworkWidth: CGFloat
+  let videoWidth: CGFloat
   let sectionSpacing: CGFloat
   let horizontalInset: CGFloat
   let scrubberInset: CGFloat
@@ -267,6 +334,9 @@ struct NowPlayingLayoutMetrics: Equatable {
   init(width: CGFloat, height: CGFloat) {
     isCompact = height < 650
     let availableWidth = max(width - 40, 0)
+    // Landscape video is naturally much shorter than square cover art at the
+    // same width, so let it use more of the screen while keeping a small inset.
+    videoWidth = max(width - (isCompact ? 16 : 24), 0)
 
     if isCompact {
       artworkWidth = min(availableWidth, max(210, min(250, height * 0.43)))

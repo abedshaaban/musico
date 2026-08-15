@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct MusicoApp: App {
@@ -9,6 +10,8 @@ struct MusicoApp: App {
     @StateObject private var playback: PlaybackController
 
     init() {
+        Self.configureAppearance()
+
         // Wire services during launch rather than from a view callback. A background
         // URLSession relaunch may not display a scene before its delegate events arrive.
         let library = LibraryStore()
@@ -27,7 +30,44 @@ struct MusicoApp: App {
                 .environmentObject(library)
                 .environmentObject(downloads)
                 .environmentObject(playback)
+                .preferredColorScheme(.dark)
         }
+    }
+
+    private static func configureAppearance() {
+        let navigationAppearance = UINavigationBarAppearance()
+        navigationAppearance.configureWithOpaqueBackground()
+        navigationAppearance.backgroundColor = UIColor(MusicoTheme.background)
+        navigationAppearance.shadowColor = UIColor(MusicoTheme.stroke)
+        navigationAppearance.titleTextAttributes = [.foregroundColor: UIColor.white]
+        navigationAppearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+
+        UINavigationBar.appearance().standardAppearance = navigationAppearance
+        UINavigationBar.appearance().compactAppearance = navigationAppearance
+        UINavigationBar.appearance().scrollEdgeAppearance = navigationAppearance
+        UINavigationBar.appearance().tintColor = UIColor(MusicoTheme.magenta)
+
+        let tabAppearance = UITabBarAppearance()
+        tabAppearance.configureWithOpaqueBackground()
+        tabAppearance.backgroundColor = UIColor(MusicoTheme.backgroundLifted)
+        tabAppearance.shadowColor = UIColor(MusicoTheme.stroke)
+        tabAppearance.stackedLayoutAppearance.selected.iconColor = UIColor(MusicoTheme.magenta)
+        tabAppearance.stackedLayoutAppearance.selected.titleTextAttributes = [
+            .foregroundColor: UIColor(MusicoTheme.magenta)
+        ]
+        tabAppearance.stackedLayoutAppearance.normal.iconColor = UIColor.white.withAlphaComponent(0.52)
+        tabAppearance.stackedLayoutAppearance.normal.titleTextAttributes = [
+            .foregroundColor: UIColor.white.withAlphaComponent(0.52)
+        ]
+
+        UITabBar.appearance().standardAppearance = tabAppearance
+        if #available(iOS 15.0, *) {
+            UITabBar.appearance().scrollEdgeAppearance = tabAppearance
+        }
+
+        UITableView.appearance().backgroundColor = .clear
+        UITableViewCell.appearance().backgroundColor = .clear
+        UITableView.appearance().separatorColor = UIColor.white.withAlphaComponent(0.08)
     }
 }
 

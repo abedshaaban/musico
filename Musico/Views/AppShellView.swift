@@ -29,12 +29,14 @@ struct AppShellView: View {
                 .tabItem { Label("Now Playing", systemImage: "play.circle") }
                 .tag(AppTab.nowPlaying)
         }
-        .accentColor(.primary)
-        .safeAreaInset(edge: .top, spacing: 0) {
+        .accentColor(MusicoTheme.magenta)
+        .background(MusicoTheme.background.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 8) {
             if playback.currentItem != nil, selectedTab != .nowPlaying {
                 MiniPlayerBar {
                     selectedTab = .nowPlaying
                 }
+                .padding(.horizontal, 10)
             } else {
                 EmptyView()
             }

@@ -53,7 +53,7 @@ struct LibraryView: View {
                         ForEach(recentlyPlayed.prefix(10)) { item in
                             MediaRow(item: item)
                                 .padding(.vertical, 8)
-                                .musicoFullBleedSwipeRow()
+                                .musicoFullBleedSwipeRow(isHighlighted: playback.currentItem?.id == item.id)
                                 .musicoLibraryRowTap {
                                     playback.play(item, from: recentlyPlayed, fileURL: library.fileURL)
                                 }
@@ -117,7 +117,7 @@ struct LibraryView: View {
                     ForEach(displayedItems) { item in
                         MediaRow(item: item)
                             .padding(.vertical, 8)
-                            .musicoFullBleedSwipeRow()
+                            .musicoFullBleedSwipeRow(isHighlighted: playback.currentItem?.id == item.id)
                             .musicoLibraryRowTap {
                                 playback.play(item, from: displayedItems, fileURL: library.fileURL)
                             }
@@ -158,6 +158,7 @@ struct LibraryView: View {
                 }
             }
             .musicoPlainLibraryListStyle()
+            .musicoThemedListBackground()
             .navigationTitle("Library")
             .searchable(text: $searchText, prompt: "Search title, artist, album, genre, or year")
             .toolbar {
@@ -213,6 +214,7 @@ struct LibraryView: View {
                         TextField(musicoPrompt: "Playlist name", text: $playlistName)
                             .musicoFormTextField()
                     }
+                    .musicoThemedListBackground()
                     .navigationTitle("New Playlist")
                     .musicoInlineNavigationTitle()
                     .toolbar {
@@ -309,6 +311,7 @@ private struct StorageManagementView: View {
     @State private var confirmsCleanup = false
     @State private var cleanupMessage: String?
     @State private var deletionTarget: StorageReport.ItemUsage?
+    @State private var isBackupPresented = false
 
     var body: some View {
         NavigationView {
@@ -318,6 +321,14 @@ private struct StorageManagementView: View {
                     storageRow("Artwork", bytes: report.artworkBytes, icon: "photo")
                     storageRow("Library Data", bytes: report.metadataBytes, icon: "doc.text")
                     storageRow("Total", bytes: report.totalBytes, icon: "internaldrive")
+                }
+
+                Section("Backup & Transfer") {
+                    Button {
+                        isBackupPresented = true
+                    } label: {
+                        Label("Backup or Restore Library", systemImage: "externaldrive.badge.timemachine")
+                    }
                 }
 
                 Section {
@@ -381,6 +392,7 @@ private struct StorageManagementView: View {
                     }
                 }
             }
+            .musicoThemedListBackground()
             .navigationTitle("Storage")
             .musicoInlineNavigationTitle()
             .toolbar {
@@ -426,6 +438,9 @@ private struct StorageManagementView: View {
                 )
             }
             .task { await loadReport() }
+            .sheet(isPresented: $isBackupPresented, onDismiss: refresh) {
+                BackupTransferView()
+            }
         }
         .musicoStackNavigationStyle()
     }
@@ -554,7 +569,7 @@ struct PlaylistDetailView: View {
                 ForEach(filteredItems) { item in
                     MediaRow(item: item)
                         .padding(.vertical, 8)
-                        .musicoFullBleedSwipeRow()
+                        .musicoFullBleedSwipeRow(isHighlighted: playback.currentItem?.id == item.id)
                         .musicoLibraryRowTap {
                             playback.play(item, from: filteredItems, fileURL: library.fileURL)
                         }
@@ -574,6 +589,7 @@ struct PlaylistDetailView: View {
             }
         }
         .musicoPlainLibraryListStyle()
+        .musicoThemedListBackground()
         .navigationTitle(playlist?.name ?? "Playlist")
         .searchable(text: $searchText, prompt: "Search title, artist, album, genre, or year")
         .sheet(item: $editingItem) { item in

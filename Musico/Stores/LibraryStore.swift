@@ -368,6 +368,25 @@ final class LibraryStore: ObservableObject {
         playlist.itemIDs.compactMap { id in items.first(where: { $0.id == id }) }
     }
 
+    func backupSnapshot() -> PersistedLibrary {
+        PersistedLibrary(
+            items: items,
+            playlists: playlists,
+            recentlyPlayedIDs: recentlyPlayedIDs,
+            knownArtists: knownArtists
+        )
+    }
+
+    func reloadAfterRestore() {
+        items = []
+        playlists = []
+        recentlyPlayedIDs = []
+        knownArtists = []
+        lastError = nil
+        clearArtworkCache()
+        load()
+    }
+
     func storageReport() async -> StorageReport {
         let snapshot = items
         return await Task.detached(priority: .utility) {

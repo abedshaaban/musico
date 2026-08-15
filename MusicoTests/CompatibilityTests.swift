@@ -358,6 +358,7 @@ final class CompatibilityTests: XCTestCase {
     }
 
     func testCollectionSummaryOmitsBlankMetadata() {
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
         let item = LibraryItem(
             id: UUID(),
             title: "Teardrop",
@@ -368,7 +369,7 @@ final class CompatibilityTests: XCTestCase {
             kind: .audio,
             localFilename: "teardrop.m4a",
             originalFilename: "Teardrop.m4a",
-            addedAt: Date(),
+            addedAt: savedAt,
             artworkFilename: nil
         )
 
@@ -436,6 +437,160 @@ final class CompatibilityTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldOrphanArtwork.path))
     }
 
+    func testMusicoBackupRoundTripPreservesLibraryMediaArtworkAndPreferences() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let media = root.appendingPathComponent("Source/Media", isDirectory: true)
+        let artwork = root.appendingPathComponent("Source/Artwork", isDirectory: true)
+        let temporary = root.appendingPathComponent("Temporary", isDirectory: true)
+        let destination = root.appendingPathComponent("Destination/Musico", isDirectory: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artwork, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let mediaData = Data("portable media bytes".utf8)
+        let artworkData = Data("portable artwork bytes".utf8)
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try mediaData.write(to: media.appendingPathComponent("track.m4a"))
+        try artworkData.write(to: artwork.appendingPathComponent("cover.jpg"))
+        let item = LibraryItem(
+            id: UUID(),
+            title: "Teardrop",
+            artist: "Massive Attack",
+            album: "Mezzanine",
+            genre: "Trip Hop",
+            year: 1998,
+            trackNumber: 3,
+            kind: .audio,
+            localFilename: "track.m4a",
+            originalFilename: "Teardrop.m4a",
+            addedAt: savedAt,
+            artworkFilename: "cover.jpg"
+        )
+        let playlist = Playlist(
+            id: UUID(),
+            name: "Night",
+            itemIDs: [item.id],
+            createdAt: savedAt
+        )
+        let library = PersistedLibrary(
+            items: [item],
+            playlists: [playlist],
+            recentlyPlayedIDs: [item.id],
+            knownArtists: [item.artist]
+        )
+
+        let backup = try MusicoBackupService.create(
+            library: library,
+            mediaDirectory: media,
+            artworkDirectory: artwork,
+            preferences: ["nowPlayingVisualStyle": "cassette"],
+            appVersion: "1.0",
+            temporaryDirectory: temporary
+        )
+        let preview = try MusicoBackupService.inspect(backup.fileURL)
+
+        XCTAssertEqual(preview.itemCount, 1)
+        XCTAssertEqual(preview.mediaBytes, Int64(mediaData.count))
+        XCTAssertEqual(backup.fileURL.pathExtension, "musicobackup")
+
+        let downloadHistory = Data("existing download history".utf8)
+        try downloadHistory.write(to: destination.appendingPathComponent("downloads.json"))
+        let manifest = try MusicoBackupService.restore(
+            backup.fileURL,
+            applicationSupport: destination
+        )
+
+        let restoredData = try Data(contentsOf: destination.appendingPathComponent("library.json"))
+        let restored = try JSONDecoder.musico.decode(PersistedLibrary.self, from: restoredData)
+        XCTAssertEqual(restored.items, [item])
+        XCTAssertEqual(restored.playlists, [playlist])
+        XCTAssertEqual(restored.recentlyPlayedIDs, [item.id])
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("Media/track.m4a")),
+            mediaData
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("Artwork/cover.jpg")),
+            artworkData
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("downloads.json")),
+            downloadHistory
+        )
+        XCTAssertEqual(manifest.preferences["nowPlayingVisualStyle"], "cassette")
+    }
+
+    func testMusicoBackupRejectsTruncatedArchive() throws {
+        let fixture = try makeBackupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let size = try fixture.backup.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize!
+        let handle = try FileHandle(forWritingTo: fixture.backup.fileURL)
+        try handle.truncate(atOffset: UInt64(size - 1))
+        try handle.close()
+
+        XCTAssertThrowsError(try MusicoBackupService.inspect(fixture.backup.fileURL)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("incomplete"))
+        }
+    }
+
+    func testMusicoBackupDetectsAlteredPayloadBeforeReplacingLibrary() throws {
+        let fixture = try makeBackupFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let destination = fixture.root.appendingPathComponent("Existing/Musico", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: destination.appendingPathComponent("Media", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let existingLibrary = Data("existing library".utf8)
+        try existingLibrary.write(to: destination.appendingPathComponent("library.json"))
+
+        let size = try fixture.backup.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize!
+        let handle = try FileHandle(forWritingTo: fixture.backup.fileURL)
+        try handle.seek(toOffset: UInt64(size - 1))
+        try handle.write(contentsOf: Data([0xFF]))
+        try handle.close()
+
+        XCTAssertThrowsError(
+            try MusicoBackupService.restore(
+                fixture.backup.fileURL,
+                applicationSupport: destination
+            )
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: destination.appendingPathComponent("library.json")),
+            existingLibrary
+        )
+    }
+
+    func testMusicoBackupRejectsUnsafeLibraryFilename() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let item = LibraryItem(
+            id: UUID(),
+            title: "Unsafe",
+            artist: "Artist",
+            kind: .audio,
+            localFilename: "../outside.m4a",
+            originalFilename: "outside.m4a",
+            addedAt: Date(),
+            artworkFilename: nil
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertThrowsError(
+            try MusicoBackupService.create(
+                library: PersistedLibrary(items: [item], playlists: []),
+                mediaDirectory: root,
+                artworkDirectory: root,
+                preferences: [:],
+                appVersion: "1.0",
+                temporaryDirectory: root
+            )
+        )
+    }
+
     @MainActor
     func testConfirmedDownloadMetadataOverridesEmbeddedTags() {
         XCTAssertEqual(
@@ -496,6 +651,7 @@ final class CompatibilityTests: XCTestCase {
 
         XCTAssertTrue(layout.isCompact)
         XCTAssertLessThanOrEqual(layout.artworkWidth, 250)
+        XCTAssertEqual(layout.videoWidth, 359)
         XCTAssertEqual(layout.sectionSpacing, 10)
         XCTAssertEqual(layout.playButtonSize, 50)
     }
@@ -505,8 +661,38 @@ final class CompatibilityTests: XCTestCase {
 
         XCTAssertFalse(layout.isCompact)
         XCTAssertEqual(layout.artworkWidth, 353)
+        XCTAssertEqual(layout.videoWidth, 369)
         XCTAssertEqual(layout.sectionSpacing, 20)
         XCTAssertEqual(layout.playButtonSize, 58)
+    }
+
+    private func makeBackupFixture() throws -> (root: URL, backup: CreatedMusicoBackup) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let media = root.appendingPathComponent("Media", isDirectory: true)
+        let artwork = root.appendingPathComponent("Artwork", isDirectory: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artwork, withIntermediateDirectories: true)
+        try Data("fixture payload".utf8).write(to: media.appendingPathComponent("fixture.m4a"))
+        let item = LibraryItem(
+            id: UUID(),
+            title: "Fixture",
+            artist: "Artist",
+            kind: .audio,
+            localFilename: "fixture.m4a",
+            originalFilename: "Fixture.m4a",
+            addedAt: Date(),
+            artworkFilename: nil
+        )
+        let backup = try MusicoBackupService.create(
+            library: PersistedLibrary(items: [item], playlists: []),
+            mediaDirectory: media,
+            artworkDirectory: artwork,
+            preferences: [:],
+            appVersion: "1.0",
+            temporaryDirectory: root.appendingPathComponent("Temporary")
+        )
+        return (root, backup)
     }
 }
 

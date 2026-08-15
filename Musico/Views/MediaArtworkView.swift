@@ -18,11 +18,13 @@ struct MediaArtworkView: View {
                     .resizable()
                     .scaledToFill()
             } else {
-                Image(systemName: item.kind.systemImage)
-                    .font(.system(size: size * 0.42, weight: .medium))
-                    .foregroundColor(.accentColor)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.secondary.opacity(0.12))
+                ZStack {
+                    MusicoTheme.surfaceGradient
+                    MusicoTheme.brandGradient.opacity(0.22)
+                    Image(systemName: item.kind.systemImage)
+                        .font(.system(size: size * 0.40, weight: .medium))
+                        .foregroundColor(.white.opacity(0.88))
+                }
             }
         }
         .frame(width: size, height: size)
@@ -42,10 +44,11 @@ struct LargeMediaArtworkView: View {
                     .scaledToFill()
             } else {
                 ZStack {
-                    Color.secondary.opacity(0.12)
+                    MusicoTheme.surfaceGradient
+                    MusicoTheme.brandGradient.opacity(0.18)
                     Image(systemName: item.kind.systemImage)
                         .font(.system(size: 82, weight: .light))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.78))
                 }
             }
         }

@@ -11,7 +11,7 @@ extension View {
     /// Primary input text and caret for form fields.
     func musicoFormTextField() -> some View {
         foregroundColor(.primary)
-            .tint(.primary)
+            .tint(MusicoTheme.magenta)
     }
 
     @ViewBuilder
@@ -61,6 +61,20 @@ extension View {
 #endif
     }
 
+    @ViewBuilder
+    func musicoThemedListBackground() -> some View {
+#if os(iOS)
+        if #available(iOS 16.0, *) {
+            scrollContentBackground(.hidden)
+                .background(MusicoBackground().ignoresSafeArea())
+        } else {
+            background(MusicoBackground().ignoresSafeArea())
+        }
+#else
+        background(MusicoBackground().ignoresSafeArea())
+#endif
+    }
+
     /// Makes a library row tappable without wrapping it in `Button`, so trailing
     /// swipe actions render as full-height iOS-style actions instead of compact circles.
     func musicoLibraryRowTap(action: @escaping () -> Void) -> some View {
@@ -68,9 +82,14 @@ extension View {
             .onTapGesture(perform: action)
     }
 
-    func musicoFullBleedSwipeRow() -> some View {
+    func musicoFullBleedSwipeRow(isHighlighted: Bool = false) -> some View {
         listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 0))
-            .listRowBackground(Color(UIColor.systemBackground))
+            .listRowBackground(
+                isHighlighted
+                    ? MusicoTheme.elevatedSurface.opacity(0.92)
+                    : MusicoTheme.surface.opacity(0.54)
+            )
+            .listRowSeparatorTint(Color.white.opacity(0.08))
             .clipShape(Rectangle())
     }
 
@@ -87,7 +106,7 @@ extension View {
             Button(action: onEdit) {
                 Text(editLabel)
             }
-            .tint(.blue)
+            .tint(MusicoTheme.violet)
         }
     }
 }

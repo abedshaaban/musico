@@ -24,6 +24,10 @@ struct NowPlayingPlayerVisual: View {
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(style == .cassette ? 1.4 : 1, contentMode: .fit)
+        .overlay(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(MusicoTheme.stroke, lineWidth: 1)
+        )
     }
 }
 
@@ -41,14 +45,11 @@ private struct TrackArtworkFill: View {
                     .scaledToFill()
             } else {
                 ZStack {
-                    LinearGradient(
-                        colors: [Color.secondary.opacity(0.18), Color.secondary.opacity(0.08)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+                    MusicoTheme.surfaceGradient
+                    MusicoTheme.brandGradient.opacity(0.18)
                     Image(systemName: item.kind.systemImage)
                         .font(.system(size: 44, weight: .light))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.76))
                 }
             }
         }

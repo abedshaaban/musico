@@ -47,15 +47,17 @@ enum MediaMetadataExtractor {
 
             let rawKey = (item.key as? String) ?? ""
             switch rawKey {
-            case "TALB", "©alb" where metadata.album == nil:
-                metadata.album = value
-            case "TCON", "©gen" where metadata.genre == nil:
-                metadata.genre = value
-            case "TYER", "TDRC", "©day" where metadata.year == nil:
-                metadata.year = value.flatMap(parseYear)
-            case "TRCK", "trkn" where metadata.trackNumber == nil:
-                metadata.trackNumber = value.flatMap(parseTrackNumber)
-                    ?? item.numberValue?.intValue
+            case "TALB", "©alb":
+                if metadata.album == nil { metadata.album = value }
+            case "TCON", "©gen":
+                if metadata.genre == nil { metadata.genre = value }
+            case "TYER", "TDRC", "©day":
+                if metadata.year == nil { metadata.year = value.flatMap(parseYear) }
+            case "TRCK", "trkn":
+                if metadata.trackNumber == nil {
+                    metadata.trackNumber = value.flatMap(parseTrackNumber)
+                        ?? item.numberValue?.intValue
+                }
             default:
                 break
             }

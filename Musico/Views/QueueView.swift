@@ -10,17 +10,18 @@ struct QueueView: View {
             Group {
                 if playback.queue.isEmpty {
                     VStack(spacing: 12) {
-                        Image(systemName: "list.bullet")
-                            .font(.system(size: 40, weight: .light))
-                            .foregroundColor(.secondary)
+                        MusicoWaveMark(lineWidth: 8)
+                            .frame(width: 150, height: 68)
                         Text("Nothing Queued")
                             .font(.headline)
                         Text("Play something from Library to build a queue.")
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(MusicoTheme.secondaryText)
                             .multilineTextAlignment(.center)
                     }
                     .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(MusicoBackground().ignoresSafeArea())
                 } else {
                     List {
                         ForEach(Array(playback.queue.enumerated()), id: \.element.id) { index, item in
@@ -51,6 +52,7 @@ struct QueueView: View {
                         .onDelete(perform: playback.removeFromQueue)
                     }
                     .musicoInsetGroupedListStyle()
+                    .musicoThemedListBackground()
                 }
             }
             .navigationTitle("Up Next")
@@ -105,6 +107,7 @@ struct SleepTimerSheet: View {
                 }
             }
             .musicoInsetGroupedListStyle()
+            .musicoThemedListBackground()
             .navigationTitle("Sleep Timer")
             .musicoInlineNavigationTitle()
             .toolbar {

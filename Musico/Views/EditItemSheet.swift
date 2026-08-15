@@ -63,6 +63,7 @@ struct EditItemSheet: View {
                     }
                 }
             }
+            .musicoThemedListBackground()
             .navigationTitle("Edit Track")
             .musicoInlineNavigationTitle()
             .toolbar {

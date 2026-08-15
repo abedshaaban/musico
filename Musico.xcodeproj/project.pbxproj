@@ -30,6 +30,9 @@
 		A10000000000000000000015 /* NowPlayingPlayerVisual.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* NowPlayingPlayerVisual.swift */; };
 		A10000000000000000000016 /* CompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* CompatibilityTests.swift */; };
 		A10000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* Assets.xcassets */; };
+		A10000000000000000000018 /* MusicoTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001B /* MusicoTheme.swift */; };
+		A10000000000000000000019 /* MusicoBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001C /* MusicoBackupService.swift */; };
+		A1000000000000000000001A /* BackupTransferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001D /* BackupTransferView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +72,9 @@
 		B10000000000000000000018 /* CompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompatibilityTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000019 /* MusicoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MusicoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1000000000000000000001A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B1000000000000000000001B /* MusicoTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicoTheme.swift; sourceTree = "<group>"; };
+		B1000000000000000000001C /* MusicoBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicoBackupService.swift; sourceTree = "<group>"; };
+		B1000000000000000000001D /* BackupTransferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupTransferView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -135,6 +141,7 @@
 				B10000000000000000000003 /* LibraryStore.swift */,
 				B10000000000000000000004 /* DownloadManager.swift */,
 				B1000000000000000000000F /* YouTubeResolver.swift */,
+				B1000000000000000000001C /* MusicoBackupService.swift */,
 			);
 			path = Stores;
 			sourceTree = "<group>";
@@ -163,6 +170,8 @@
 				B10000000000000000000014 /* QueueView.swift */,
 				B10000000000000000000015 /* ArtistComboField.swift */,
 				B10000000000000000000017 /* NowPlayingPlayerVisual.swift */,
+				B1000000000000000000001B /* MusicoTheme.swift */,
+				B1000000000000000000001D /* BackupTransferView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -313,6 +322,9 @@
 				A10000000000000000000013 /* ArtistComboField.swift in Sources */,
 				A10000000000000000000014 /* PlayerVisualStyle.swift in Sources */,
 				A10000000000000000000015 /* NowPlayingPlayerVisual.swift in Sources */,
+				A10000000000000000000018 /* MusicoTheme.swift in Sources */,
+				A10000000000000000000019 /* MusicoBackupService.swift in Sources */,
+				A1000000000000000000001A /* BackupTransferView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -373,7 +385,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_ASSET_PATHS = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Musico/Resources/Info.plist;
@@ -394,7 +406,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Musico/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
