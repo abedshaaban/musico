@@ -44,6 +44,8 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var waveformLevel: CGFloat = 0
     @Published private(set) var waveformFrequency: CGFloat = 220
     @Published private(set) var hasLiveWaveformData = false
+    @Published private(set) var liveWaveformBars: [CGFloat] = []
+    @Published private(set) var liveWaveformSamples: [Float] = []
 
     private weak var library: LibraryStore?
     private var cachedFileURL: ((LibraryItem) -> URL)?
@@ -166,6 +168,7 @@ final class PlaybackController: ObservableObject {
         waveformLevel = 0
         waveformFrequency = 220
         hasLiveWaveformData = false
+        liveWaveformBars = []
         queue = []
         currentQueueIndex = 0
         cachedFileURL = nil
@@ -380,6 +383,7 @@ final class PlaybackController: ObservableObject {
         waveformLevel = 0
         waveformFrequency = 220
         hasLiveWaveformData = false
+        liveWaveformBars = []
         lastPlaybackIssue = nil
         statusObservation?.invalidate()
         errorObservation?.invalidate()
@@ -405,11 +409,13 @@ final class PlaybackController: ObservableObject {
 
     private func makePlayerItem(for item: LibraryItem, url: URL) -> AVPlayerItem {
         let playerItem = AVPlayerItem(url: url)
-        playerItem.audioMix = PlaybackAudioTap.makeAudioMix(for: playerItem.asset) { [weak self] level, frequency in
+        playerItem.audioMix = PlaybackAudioTap.makeAudioMix(for: playerItem.asset) { [weak self] snapshot in
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.currentItem?.id == item.id else { return }
-                self.waveformLevel = CGFloat(level)
-                self.waveformFrequency = CGFloat(frequency)
+                self.liveWaveformBars = snapshot.bars.map { CGFloat($0) }
+                self.liveWaveformSamples = snapshot.samples
+                self.waveformLevel = CGFloat(snapshot.level)
+                self.waveformFrequency = CGFloat(snapshot.frequency)
                 self.hasLiveWaveformData = true
             }
         }
@@ -915,12 +921,20 @@ final class PlaybackController: ObservableObject {
 
 // MARK: - Audio-reactive waveform analysis
 
-/// Reads the decoded PCM that is already passing through `AVPlayer`, without
-/// changing it, and publishes a lightweight level/frequency estimate for the UI.
+private struct WaveformAnalysisSnapshot {
+    var bars: [Float]
+    var samples: [Float]
+    var level: Float
+    var frequency: Float
+}
+
+/// Reads decoded PCM from `AVPlayer` and publishes live bar peaks for the UI.
 private enum PlaybackAudioTap {
+    static let barCount = TrackWaveformAnalyzer.defaultVisibleBars
+
     static func makeAudioMix(
         for asset: AVAsset,
-        onAnalysis: @escaping (Float, Float) -> Void
+        onAnalysis: @escaping (WaveformAnalysisSnapshot) -> Void
     ) -> AVAudioMix? {
         guard let track = asset.tracks(withMediaType: .audio).first else { return nil }
 
@@ -980,14 +994,26 @@ private enum PlaybackAudioTap {
 }
 
 private final class PlaybackAudioTapContext {
-    private let onAnalysis: (Float, Float) -> Void
+    private let onAnalysis: (WaveformAnalysisSnapshot) -> Void
     private var format = AudioStreamBasicDescription()
     private var smoothedLevel: Float = 0
     private var smoothedFrequency: Float = 220
     private var lastPublishTime: CFTimeInterval = 0
 
-    init(onAnalysis: @escaping (Float, Float) -> Void) {
+    private var recentBars: [Float]
+    private var recentSamples: [Float]
+    private var writeIndex = 0
+    private var sampleWriteIndex = 0
+    private var barPeak: Float = 0
+    private var barSumSquares: Float = 0
+    private var barFrameCount = 0
+    private var framesPerBar = 1_024
+    private let targetSampleCount = 256
+
+    init(onAnalysis: @escaping (WaveformAnalysisSnapshot) -> Void) {
         self.onAnalysis = onAnalysis
+        self.recentBars = Array(repeating: 0.04, count: PlaybackAudioTap.barCount)
+        self.recentSamples = Array(repeating: 0, count: targetSampleCount)
     }
 
     func prepare(format: AudioStreamBasicDescription) {
@@ -995,50 +1021,81 @@ private final class PlaybackAudioTapContext {
         smoothedLevel = 0
         smoothedFrequency = 220
         lastPublishTime = 0
+        writeIndex = 0
+        sampleWriteIndex = 0
+        barPeak = 0
+        barSumSquares = 0
+        barFrameCount = 0
+        recentBars = Array(repeating: 0.04, count: PlaybackAudioTap.barCount)
+        recentSamples = Array(repeating: 0, count: targetSampleCount)
+        framesPerBar = max(
+            Int(format.mSampleRate * (TrackWaveformAnalyzer.defaultWindowSeconds / Double(PlaybackAudioTap.barCount))),
+            256
+        )
     }
 
     func analyze(bufferList: UnsafeMutablePointer<AudioBufferList>, frameCount: CMItemCount) {
         let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
-        guard let buffer = buffers.first, let data = buffer.mData else { return }
-
         let isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
         let isSignedInteger = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
         let isInterleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
-        let channelStride = isInterleaved ? max(Int(buffer.mNumberChannels), 1) : 1
         let requestedFrames = max(Int(frameCount), 0)
 
         var sumSquares: Float = 0
+        var bufferPeak: Float = 0
         var crossingCount = 0
         var previousSample: Float = 0
         var analyzedFrames = 0
 
-        if isFloat, format.mBitsPerChannel == 32 {
-            let samples = data.assumingMemoryBound(to: Float.self)
-            let availableSamples = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
-            analyzedFrames = min(requestedFrames, availableSamples / channelStride)
-            for frame in 0..<analyzedFrames {
-                let sample = samples[frame * channelStride]
-                sumSquares += sample * sample
-                if frame > 0, (sample >= 0) != (previousSample >= 0) { crossingCount += 1 }
-                previousSample = sample
-            }
-        } else if isSignedInteger, format.mBitsPerChannel == 16 {
-            let samples = data.assumingMemoryBound(to: Int16.self)
-            let availableSamples = Int(buffer.mDataByteSize) / MemoryLayout<Int16>.size
-            analyzedFrames = min(requestedFrames, availableSamples / channelStride)
-            for frame in 0..<analyzedFrames {
-                let sample = Float(samples[frame * channelStride]) / Float(Int16.max)
-                sumSquares += sample * sample
-                if frame > 0, (sample >= 0) != (previousSample >= 0) { crossingCount += 1 }
-                previousSample = sample
+        if isInterleaved {
+            guard let buffer = buffers.first, let data = buffer.mData else { return }
+            let channelCount = max(Int(buffer.mNumberChannels), 1)
+            let channelStride = channelCount
+            analyzeInterleavedBuffer(
+                data: data,
+                byteSize: Int(buffer.mDataByteSize),
+                channelStride: channelStride,
+                requestedFrames: requestedFrames,
+                isFloat: isFloat,
+                isSignedInteger: isSignedInteger,
+                sumSquares: &sumSquares,
+                bufferPeak: &bufferPeak,
+                crossingCount: &crossingCount,
+                previousSample: &previousSample,
+                analyzedFrames: &analyzedFrames
+            )
+        } else {
+            for buffer in buffers {
+                guard let data = buffer.mData else { continue }
+                analyzeInterleavedBuffer(
+                    data: data,
+                    byteSize: Int(buffer.mDataByteSize),
+                    channelStride: 1,
+                    requestedFrames: requestedFrames,
+                    isFloat: isFloat,
+                    isSignedInteger: isSignedInteger,
+                    sumSquares: &sumSquares,
+                    bufferPeak: &bufferPeak,
+                    crossingCount: &crossingCount,
+                    previousSample: &previousSample,
+                    analyzedFrames: &analyzedFrames
+                )
             }
         }
 
         guard analyzedFrames > 0 else { return }
+
+        barPeak = max(barPeak, bufferPeak)
+        barSumSquares += sumSquares
+        barFrameCount += analyzedFrames
+        while barFrameCount >= framesPerBar {
+            commitBar()
+        }
+
         let rms = sqrt(sumSquares / Float(analyzedFrames))
         let decibels = 20 * log10(max(rms, 0.000_1))
         let normalizedLevel = min(max((decibels + 48) / 42, 0), 1)
-        smoothedLevel = (smoothedLevel * 0.68) + (normalizedLevel * 0.32)
+        smoothedLevel = (smoothedLevel * 0.55) + (normalizedLevel * 0.45)
 
         if crossingCount > 1, format.mSampleRate > 0 {
             let estimatedFrequency = Float(crossingCount) * Float(format.mSampleRate)
@@ -1048,8 +1105,99 @@ private final class PlaybackAudioTapContext {
         }
 
         let now = CACurrentMediaTime()
-        guard now - lastPublishTime >= 1.0 / 20.0 else { return }
+        guard now - lastPublishTime >= 1.0 / 30.0 else { return }
         lastPublishTime = now
-        onAnalysis(smoothedLevel, smoothedFrequency)
+        publish(level: smoothedLevel, frequency: smoothedFrequency)
+    }
+
+    private func analyzeInterleavedBuffer(
+        data: UnsafeMutableRawPointer,
+        byteSize: Int,
+        channelStride: Int,
+        requestedFrames: Int,
+        isFloat: Bool,
+        isSignedInteger: Bool,
+        sumSquares: inout Float,
+        bufferPeak: inout Float,
+        crossingCount: inout Int,
+        previousSample: inout Float,
+        analyzedFrames: inout Int
+    ) {
+        if isFloat, format.mBitsPerChannel == 32 {
+            let samples = data.assumingMemoryBound(to: Float.self)
+            let availableSamples = byteSize / MemoryLayout<Float>.size
+            let frames = min(requestedFrames, availableSamples / max(channelStride, 1))
+            let decimationStep = max(frames / targetSampleCount, 1)
+            for frame in stride(from: 0, to: frames, by: decimationStep) {
+                var framePeak: Float = 0
+                for channel in 0..<channelStride {
+                    let sample = samples[frame * channelStride + channel]
+                    framePeak = max(framePeak, abs(sample))
+                    sumSquares += sample * sample
+                }
+                recentSamples[sampleWriteIndex] = samples[frame * channelStride]
+                sampleWriteIndex = (sampleWriteIndex + 1) % targetSampleCount
+                bufferPeak = max(bufferPeak, framePeak)
+                let sample = samples[frame * channelStride]
+                if frame > 0, (sample >= 0) != (previousSample >= 0) { crossingCount += 1 }
+                previousSample = sample
+            }
+            analyzedFrames += frames
+        } else if isSignedInteger, format.mBitsPerChannel == 16 {
+            let samples = data.assumingMemoryBound(to: Int16.self)
+            let availableSamples = byteSize / MemoryLayout<Int16>.size
+            let frames = min(requestedFrames, availableSamples / max(channelStride, 1))
+            let decimationStep = max(frames / targetSampleCount, 1)
+            for frame in stride(from: 0, to: frames, by: decimationStep) {
+                var framePeak: Float = 0
+                for channel in 0..<channelStride {
+                    let sample = Float(samples[frame * channelStride + channel]) / Float(Int16.max)
+                    framePeak = max(framePeak, abs(sample))
+                    sumSquares += sample * sample
+                }
+                recentSamples[sampleWriteIndex] = Float(samples[frame * channelStride]) / Float(Int16.max)
+                sampleWriteIndex = (sampleWriteIndex + 1) % targetSampleCount
+                bufferPeak = max(bufferPeak, framePeak)
+                let sample = Float(samples[frame * channelStride]) / Float(Int16.max)
+                if frame > 0, (sample >= 0) != (previousSample >= 0) { crossingCount += 1 }
+                previousSample = sample
+            }
+            analyzedFrames += frames
+        }
+    }
+
+    private func commitBar() {
+        let rms = sqrt(barSumSquares / Float(max(barFrameCount, 1)))
+        let energy = max(barPeak, rms * 1.35)
+        let normalized = min(max((20 * log10(max(energy, 0.000_05)) + 52) / 36, 0.08), 1)
+        recentBars[writeIndex] = normalized
+        writeIndex = (writeIndex + 1) % recentBars.count
+        barPeak = 0
+        barSumSquares = 0
+        barFrameCount = max(barFrameCount - framesPerBar, 0)
+        publish(level: smoothedLevel, frequency: smoothedFrequency)
+    }
+
+    private func orderedBars() -> [Float] {
+        guard !recentBars.isEmpty else { return [] }
+        if writeIndex == 0 { return recentBars }
+        return Array(recentBars[writeIndex...]) + Array(recentBars[..<writeIndex])
+    }
+
+    private func orderedSamples() -> [Float] {
+        guard !recentSamples.isEmpty else { return [] }
+        if sampleWriteIndex == 0 { return recentSamples }
+        return Array(recentSamples[sampleWriteIndex...]) + Array(recentSamples[..<sampleWriteIndex])
+    }
+
+    private func publish(level: Float, frequency: Float) {
+        onAnalysis(
+            WaveformAnalysisSnapshot(
+                bars: orderedBars(),
+                samples: orderedSamples(),
+                level: level,
+                frequency: frequency
+            )
+        )
     }
 }

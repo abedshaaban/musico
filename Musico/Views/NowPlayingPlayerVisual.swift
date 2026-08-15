@@ -23,10 +23,10 @@ struct NowPlayingPlayerVisual: View {
                 ClassicPlayerVisual(item: item, isPlaying: isPlaying)
             case .waveform:
                 WaveformPlayerVisual(
-                    level: playback.waveformLevel,
-                    frequency: playback.waveformFrequency,
-                    isPlaying: isPlaying,
-                    hasLiveData: playback.hasLiveWaveformData
+                    item: item,
+                    elapsed: playback.elapsed,
+                    duration: playback.duration,
+                    isPlaying: isPlaying
                 )
             }
         }
@@ -909,13 +909,20 @@ private struct CassettePlayerVisual: View {
 // MARK: - Waveform
 
 private struct WaveformPlayerVisual: View {
-    let level: CGFloat
-    let frequency: CGFloat
-    let isPlaying: Bool
-    let hasLiveData: Bool
+    @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var playback: PlaybackController
 
-    @State private var smoothedLevel: CGFloat = 0.04
-    @State private var smoothedCycles: CGFloat = 2.5
+    let item: LibraryItem
+    let elapsed: Double
+    let duration: Double
+    let isPlaying: Bool
+
+    @State private var samples: [Float] = []
+    @State private var isLoading = true
+    @State private var hasRealWaveform = false
+
+    private let visibleBars = TrackWaveformAnalyzer.defaultVisibleBars
+    private let windowSeconds = TrackWaveformAnalyzer.defaultWindowSeconds
 
     var body: some View {
         ZStack {
@@ -927,60 +934,17 @@ private struct WaveformPlayerVisual: View {
 
             ambientGlow
 
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
-                GeometryReader { geometry in
-                    let time = timeline.date.timeIntervalSinceReferenceDate
-                    let amplitude = displayAmplitude
-                    let cycles = smoothedCycles
-                    let phase = CGFloat(time * 1.85)
-
-                    ZStack {
-                        waveLayer(
-                            amplitude: amplitude * 0.92,
-                            cycles: cycles * 0.88,
-                            phase: phase * 0.72,
-                            width: geometry.size.width,
-                            height: geometry.size.height,
-                            strokeWidth: 18,
-                            color: MusicoTheme.violet.opacity(0.22),
-                            blur: 16
-                        )
-
-                        waveLayer(
-                            amplitude: amplitude * 0.96,
-                            cycles: cycles * 1.04,
-                            phase: -phase * 0.54,
-                            width: geometry.size.width,
-                            height: geometry.size.height,
-                            strokeWidth: 10,
-                            color: MusicoTheme.magenta.opacity(0.28),
-                            blur: 10
-                        )
-
-                        waveFill(
-                            amplitude: amplitude,
-                            cycles: cycles,
-                            phase: phase,
-                            width: geometry.size.width,
-                            height: geometry.size.height
-                        )
-
-                        waveLayer(
-                            amplitude: amplitude,
-                            cycles: cycles,
-                            phase: phase,
-                            width: geometry.size.width,
-                            height: geometry.size.height,
-                            strokeWidth: 2.5,
-                            gradient: MusicoTheme.brandGradientHorizontal,
-                            blur: 0
-                        )
-                    }
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                }
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { _ in
+                let frame = windowFrame(at: liveElapsed)
+                TrackWaveformCanvas(
+                    bars: frame.bars,
+                    scrollPhase: frame.scrollPhase,
+                    isPlaying: isPlaying,
+                    isLoading: isLoading
+                )
+                .padding(.horizontal, 20)
+                .padding(.vertical, 34)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 28)
 
             VStack {
                 header
@@ -991,11 +955,50 @@ private struct WaveformPlayerVisual: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Waveform player appearance")
         .accessibilityValue(isPlaying ? "Playing" : "Paused")
-        .onAppear { syncSmoothedValues(animated: false) }
-        .onChange(of: level) { _ in syncSmoothedValues(animated: true) }
-        .onChange(of: frequency) { _ in syncSmoothedValues(animated: true) }
-        .onChange(of: isPlaying) { _ in syncSmoothedValues(animated: true) }
-        .onChange(of: hasLiveData) { _ in syncSmoothedValues(animated: true) }
+        .task(id: item.id) {
+            isLoading = true
+            hasRealWaveform = false
+            samples = await TrackWaveformCache.shared.waveform(
+                for: item.id,
+                url: library.fileURL(for: item)
+            )
+            hasRealWaveform = !samples.isEmpty
+            isLoading = false
+        }
+    }
+
+    private var liveElapsed: Double {
+        let liveElapsed = playback.player.currentTime().seconds
+        if liveElapsed.isFinite, liveElapsed >= 0 { return liveElapsed }
+        return elapsed
+    }
+
+    private func windowFrame(at time: Double) -> (bars: [Float], scrollPhase: CGFloat) {
+        let liveSamples = playback.liveWaveformSamples
+        let precomputed = TrackWaveformAnalyzer.windowSamples(
+            from: samples,
+            at: time,
+            duration: duration,
+            windowSeconds: windowSeconds,
+            visibleBars: visibleBars
+        )
+
+        if playback.hasLiveWaveformData, !liveSamples.isEmpty {
+            let resampled = TrackWaveformAnalyzer.resample(liveSamples, toCount: visibleBars)
+            return (
+                TrackWaveformAnalyzer.shapeForDisplay(resampled),
+                precomputed.scrollPhase
+            )
+        }
+
+        if hasRealWaveform {
+            return (
+                TrackWaveformAnalyzer.shapeForDisplay(precomputed.bars),
+                precomputed.scrollPhase
+            )
+        }
+
+        return (TrackWaveformAnalyzer.silenceBars(count: visibleBars), 0)
     }
 
     private var header: some View {
@@ -1016,188 +1019,74 @@ private struct WaveformPlayerVisual: View {
     private var ambientGlow: some View {
         ZStack {
             Circle()
-                .fill(MusicoTheme.magenta.opacity(0.14 + displayAmplitude * 0.12))
-                .blur(radius: 48)
-                .scaleEffect(0.72 + displayAmplitude * 0.18)
-                .offset(y: -8)
+                .fill(MusicoTheme.magenta.opacity(isPlaying ? 0.14 : 0.10))
+                .blur(radius: 52)
+                .scaleEffect(0.68)
+                .offset(y: -6)
+                .animation(.easeInOut(duration: 0.6), value: isPlaying)
 
             Circle()
-                .fill(MusicoTheme.violet.opacity(0.10 + displayAmplitude * 0.08))
-                .blur(radius: 56)
-                .scaleEffect(0.64 + displayAmplitude * 0.14)
-                .offset(y: 18)
-        }
-        .animation(.easeInOut(duration: 0.45), value: displayAmplitude)
-    }
-
-    @ViewBuilder
-    private func waveLayer(
-        amplitude: CGFloat,
-        cycles: CGFloat,
-        phase: CGFloat,
-        width: CGFloat,
-        height: CGFloat,
-        strokeWidth: CGFloat,
-        color: Color? = nil,
-        gradient: LinearGradient? = nil,
-        blur: CGFloat
-    ) -> some View {
-        let shape = ReactiveWaveShape(
-            amplitude: amplitude,
-            cycles: cycles,
-            phase: phase
-        )
-
-        Group {
-            if let gradient {
-                shape.stroke(
-                    gradient,
-                    style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round)
-                )
-            } else if let color {
-                shape.stroke(
-                    color,
-                    style: StrokeStyle(lineWidth: strokeWidth, lineCap: .round, lineJoin: .round)
-                )
-            }
-        }
-        .frame(width: width, height: height)
-        .blur(radius: blur)
-    }
-
-    private func waveFill(
-        amplitude: CGFloat,
-        cycles: CGFloat,
-        phase: CGFloat,
-        width: CGFloat,
-        height: CGFloat
-    ) -> some View {
-        ReactiveWaveFillShape(
-            amplitude: amplitude,
-            cycles: cycles,
-            phase: phase
-        )
-        .fill(
-            LinearGradient(
-                colors: [
-                    MusicoTheme.violet.opacity(0.22),
-                    MusicoTheme.magenta.opacity(0.14),
-                    MusicoTheme.coral.opacity(0.04),
-                    Color.clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-        .frame(width: width, height: height)
-        .blur(radius: 1.5)
-    }
-
-    private var displayAmplitude: CGFloat {
-        guard isPlaying else { return 0.035 }
-        return smoothedLevel
-    }
-
-    private var targetLevel: CGFloat {
-        guard isPlaying else { return 0.04 }
-        if hasLiveData {
-            return 0.14 + min(max(level, 0), 1) * 0.78
-        }
-        return 0.20
-    }
-
-    private var targetCycles: CGFloat {
-        let low: CGFloat = 55
-        let high: CGFloat = 4_000
-        let clamped = min(max(frequency, low), high)
-        let normalized = log2(clamped / low) / log2(high / low)
-        return 1.6 + normalized * 4.8
-    }
-
-    private func syncSmoothedValues(animated: Bool) {
-        let levelAnimation = Animation.interpolatingSpring(stiffness: 120, damping: 18)
-        let cycleAnimation = Animation.interpolatingSpring(stiffness: 90, damping: 16)
-
-        if animated {
-            withAnimation(levelAnimation) { smoothedLevel = targetLevel }
-            withAnimation(cycleAnimation) { smoothedCycles = targetCycles }
-        } else {
-            smoothedLevel = targetLevel
-            smoothedCycles = targetCycles
+                .fill(MusicoTheme.violet.opacity(0.08))
+                .blur(radius: 58)
+                .scaleEffect(0.62)
+                .offset(y: 16)
         }
     }
 }
 
-private struct ReactiveWaveShape: Shape {
-    let amplitude: CGFloat
-    let cycles: CGFloat
-    let phase: CGFloat
+private struct TrackWaveformCanvas: View {
+    let bars: [Float]
+    let scrollPhase: CGFloat
+    let isPlaying: Bool
+    let isLoading: Bool
 
-    func path(in rect: CGRect) -> Path {
-        wavePoints(in: rect).openPath()
+    var body: some View {
+        Canvas { context, size in
+            drawWaveform(in: &context, size: size)
+        }
+        .opacity(isLoading ? 0.65 : 1)
+        .animation(.easeInOut(duration: 0.35), value: isLoading)
     }
 
-    fileprivate func wavePoints(in rect: CGRect) -> WavePointSeries {
-        guard rect.width > 0, rect.height > 0 else {
-            return WavePointSeries(points: [])
-        }
+    private func drawWaveform(in context: inout GraphicsContext, size: CGSize) {
+        guard bars.count > 2, size.width > 0, size.height > 0 else { return }
 
-        let midY = rect.midY
-        let height = max(rect.height * 0.46 * amplitude, 0.6)
-        let sampleCount = max(Int(rect.width / 1.5), 120)
-        let step = rect.width / CGFloat(sampleCount)
-        var points: [CGPoint] = []
-        points.reserveCapacity(sampleCount + 1)
+        let midY = size.height * 0.5
+        let maxAmplitude = size.height * 0.38
+        let playheadX = size.width * 0.5
+        let points = wavePoints(size: size, midY: midY, maxAmplitude: maxAmplitude)
 
-        for index in 0...sampleCount {
-            let x = CGFloat(index) * step
-            let progress = x / rect.width
-            let envelope = pow(sin(.pi * progress), 0.72)
-            let fundamental = sin(progress * cycles * 2 * .pi + phase)
-            let harmonic = sin(progress * cycles * 4 * .pi - phase * 0.62) * 0.16
-            let shimmer = sin(progress * 10 * .pi + phase * 1.35) * 0.045
-            let y = midY + (fundamental + harmonic + shimmer) * height * envelope
-            points.append(CGPoint(x: x, y: y))
-        }
-
-        return WavePointSeries(points: points)
+        drawSoftGlow(in: &context, points: points, midY: midY, size: size)
+        drawWaveLine(
+            in: &context,
+            points: points,
+            midY: midY,
+            playheadX: playheadX,
+            size: size,
+            mirror: true
+        )
+        drawNowMarker(in: &context, midY: midY, playheadX: playheadX)
     }
-}
 
-private struct ReactiveWaveFillShape: Shape {
-    let amplitude: CGFloat
-    let cycles: CGFloat
-    let phase: CGFloat
+    private func wavePoints(size: CGSize, midY: CGFloat, maxAmplitude: CGFloat) -> [CGPoint] {
+        let count = bars.count
+        let step = size.width / CGFloat(count - 1)
+        let shift = scrollPhase * step
 
-    func path(in rect: CGRect) -> Path {
-        ReactiveWaveShape(amplitude: amplitude, cycles: cycles, phase: phase)
-            .wavePoints(in: rect)
-            .closedFillPath(in: rect)
-    }
-}
-
-private struct WavePointSeries {
-    let points: [CGPoint]
-
-    func openPath() -> Path {
-        var path = Path()
-        guard let first = points.first else { return path }
-
-        path.move(to: first)
-        guard points.count > 2 else {
-            for point in points.dropFirst() {
-                path.addLine(to: point)
-            }
-            return path
+        return (0..<count).map { index in
+            let x = CGFloat(index) * step - shift
+            let amplitude = CGFloat(bars[index]) * maxAmplitude
+            return CGPoint(x: x, y: midY - amplitude)
         }
+    }
+
+    private func addSmoothCurve(to path: inout Path, points: [CGPoint]) {
+        guard points.count > 1 else { return }
 
         for index in 1..<points.count {
             let previous = points[index - 1]
             let current = points[index]
-            let midpoint = CGPoint(
-                x: (previous.x + current.x) * 0.5,
-                y: (previous.y + current.y) * 0.5
-            )
+            let midpoint = CGPoint(x: (previous.x + current.x) * 0.5, y: (previous.y + current.y) * 0.5)
             if index == 1 {
                 path.addLine(to: midpoint)
             } else {
@@ -1208,18 +1097,109 @@ private struct WavePointSeries {
         if let last = points.last {
             path.addQuadCurve(to: last, control: points[points.count - 2])
         }
-
-        return path
     }
 
-    func closedFillPath(in rect: CGRect) -> Path {
-        var path = openPath()
-        guard let first = points.first, let last = points.last else { return path }
+    private func mirrored(points: [CGPoint], midY: CGFloat) -> [CGPoint] {
+        points.map { CGPoint(x: $0.x, y: midY * 2 - $0.y) }
+    }
 
-        path.addLine(to: CGPoint(x: last.x, y: rect.maxY))
-        path.addLine(to: CGPoint(x: first.x, y: rect.maxY))
-        path.closeSubpath()
-        return path
+    private func drawSoftGlow(
+        in context: inout GraphicsContext,
+        points: [CGPoint],
+        midY: CGFloat,
+        size: CGSize
+    ) {
+        let topPath = Path { path in
+            guard let first = points.first else { return }
+            path.move(to: first)
+            addSmoothCurve(to: &path, points: points)
+        }
+        let bottomPath = Path { path in
+            let mirror = mirrored(points: points, midY: midY)
+            guard let first = mirror.first else { return }
+            path.move(to: first)
+            addSmoothCurve(to: &path, points: mirror)
+        }
+
+        context.drawLayer { layer in
+            layer.addFilter(.blur(radius: 7))
+            layer.stroke(
+                topPath,
+                with: .color(MusicoTheme.magenta.opacity(isPlaying ? 0.26 : 0.10)),
+                lineWidth: 7
+            )
+            layer.stroke(
+                bottomPath,
+                with: .color(MusicoTheme.magenta.opacity(isPlaying ? 0.26 : 0.10)),
+                lineWidth: 7
+            )
+        }
+    }
+
+    private func drawWaveLine(
+        in context: inout GraphicsContext,
+        points: [CGPoint],
+        midY: CGFloat,
+        playheadX: CGFloat,
+        size: CGSize,
+        mirror: Bool
+    ) {
+        let gradient = Gradient(stops: [
+            .init(color: MusicoTheme.violet.opacity(0.92), location: 0),
+            .init(color: MusicoTheme.magenta.opacity(0.95), location: 0.40),
+            .init(color: MusicoTheme.coral.opacity(0.90), location: 0.52),
+            .init(color: Color.white.opacity(0.28), location: 1)
+        ])
+
+        let topPath = Path { path in
+            guard let first = points.first else { return }
+            path.move(to: first)
+            addSmoothCurve(to: &path, points: points)
+        }
+        context.stroke(
+            topPath,
+            with: .linearGradient(
+                gradient,
+                startPoint: CGPoint(x: 0, y: midY),
+                endPoint: CGPoint(x: size.width, y: midY)
+            ),
+            lineWidth: 2.6
+        )
+
+        guard mirror else { return }
+
+        let bottomPath = Path { path in
+            let mirrorPoints = mirrored(points: points, midY: midY)
+            guard let first = mirrorPoints.first else { return }
+            path.move(to: first)
+            addSmoothCurve(to: &path, points: mirrorPoints)
+        }
+        context.stroke(
+            bottomPath,
+            with: .linearGradient(
+                gradient,
+                startPoint: CGPoint(x: 0, y: midY),
+                endPoint: CGPoint(x: size.width, y: midY)
+            ),
+            lineWidth: 2.6
+        )
+    }
+
+    private func drawNowMarker(in context: inout GraphicsContext, midY: CGFloat, playheadX: CGFloat) {
+        guard isPlaying else { return }
+
+        let dotSize: CGFloat = 4
+        let dot = Path(ellipseIn: CGRect(
+            x: playheadX - dotSize * 0.5,
+            y: midY - dotSize * 0.5,
+            width: dotSize,
+            height: dotSize
+        ))
+        context.drawLayer { layer in
+            layer.addFilter(.blur(radius: 3))
+            layer.fill(dot, with: .color(MusicoTheme.magenta.opacity(0.6)))
+        }
+        context.fill(dot, with: .color(Color.white.opacity(0.9)))
     }
 }
 

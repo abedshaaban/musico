@@ -33,6 +33,7 @@
 		A10000000000000000000018 /* MusicoTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001B /* MusicoTheme.swift */; };
 		A10000000000000000000019 /* MusicoBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001C /* MusicoBackupService.swift */; };
 		A1000000000000000000001A /* BackupTransferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001D /* BackupTransferView.swift */; };
+		A1000000000000000000001B /* TrackWaveformAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001E /* TrackWaveformAnalyzer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -75,6 +76,7 @@
 		B1000000000000000000001B /* MusicoTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicoTheme.swift; sourceTree = "<group>"; };
 		B1000000000000000000001C /* MusicoBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicoBackupService.swift; sourceTree = "<group>"; };
 		B1000000000000000000001D /* BackupTransferView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupTransferView.swift; sourceTree = "<group>"; };
+		B1000000000000000000001E /* TrackWaveformAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackWaveformAnalyzer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,6 +132,7 @@
 			children = (
 				B10000000000000000000002 /* MediaModels.swift */,
 				B10000000000000000000012 /* MediaMetadataExtractor.swift */,
+				B1000000000000000000001E /* TrackWaveformAnalyzer.swift */,
 				B10000000000000000000016 /* PlayerVisualStyle.swift */,
 			);
 			path = Models;
@@ -325,6 +328,7 @@
 				A10000000000000000000018 /* MusicoTheme.swift in Sources */,
 				A10000000000000000000019 /* MusicoBackupService.swift in Sources */,
 				A1000000000000000000001A /* BackupTransferView.swift in Sources */,
+				A1000000000000000000001B /* TrackWaveformAnalyzer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
