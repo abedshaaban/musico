@@ -1,3 +1,4 @@
+@preconcurrency import AVFoundation
 import Foundation
 
 /// Downloads direct, authorized media file URLs in the background with URLSession,
@@ -443,8 +444,34 @@ extension DownloadManager: URLSessionDownloadDelegate {
         }
 
         let originalName = http?.suggestedFilename ?? sourceURL?.lastPathComponent ?? storedName
-        Task { @MainActor in
-            registerCompleted(recordID: recordID, storedName: storedName, kind: kind, originalName: originalName)
+
+        // Move validation off the URLSession delegate queue to avoid priority inversion.
+        DispatchQueue.global(qos: .default).async {
+            let asset = AVAsset(url: destination)
+            let semaphore = DispatchSemaphore(value: 0)
+            var isPlayable = false
+            asset.loadValuesAsynchronously(forKeys: ["playable"]) {
+                var error: NSError?
+                let status = asset.statusOfValue(forKey: "playable", error: &error)
+                isPlayable = status == .loaded && asset.isPlayable
+                semaphore.signal()
+            }
+            _ = semaphore.wait(timeout: .now() + 5)
+
+            guard isPlayable else {
+                try? FileManager.default.removeItem(at: destination)
+                Task { @MainActor in
+                    self.update(recordID) {
+                        $0.state = .failed
+                        $0.detail = "The downloaded file isn't a playable audio or video container."
+                    }
+                }
+                return
+            }
+
+            Task { @MainActor in
+                self.registerCompleted(recordID: recordID, storedName: storedName, kind: kind, originalName: originalName)
+            }
         }
     }
 

@@ -85,23 +85,31 @@ enum YouTubeResolver {
                 formats.append(contentsOf: adaptive)
             }
 
-            // Prefer a progressive MP4 (single file, easiest to save), then any MP4,
-            // then any playable format.
+            // Prefer muxed progressive MP4 (audio+video in one file). Avoid adaptive
+            // video-only or audio-only formats because AVPlayer cannot play them alone.
             let playable = formats.filter { format in
-                guard let mimeType = format["mimeType"] as? String else { return false }
-                return SupportedMedia.kind(forMIME: mimeType) != nil && format["url"] != nil
+                guard let mimeType = format["mimeType"] as? String,
+                      mimeType.contains("video/mp4"),
+                      format["audioQuality"] != nil,
+                      format["url"] != nil else { return false }
+                return true
             }
 
-            let progressive = playable.filter { ($0["mimeType"] as? String)?.contains("video/mp4") == true && $0["audioQuality"] != nil }
-            let anyMP4 = playable.filter { ($0["mimeType"] as? String)?.contains("mp4") == true }
-            let best = progressive.first ?? anyMP4.first ?? playable.first
+            // Sort by bitrate (highest first) for best quality.
+            let sorted = playable.sorted { lhs, rhs in
+                let lhsBitrate = (lhs["bitrate"] as? Int) ?? 0
+                let rhsBitrate = (rhs["bitrate"] as? Int) ?? 0
+                return lhsBitrate > rhsBitrate
+            }
 
-            if let best = best,
-               let streamString = best["url"] as? String,
-               let streamURL = URL(string: streamString),
-               let mimeType = best["mimeType"] as? String,
-               let kind = SupportedMedia.kind(forMIME: mimeType) {
-                let expected = Int64(best["contentLength"] as? String ?? "") ?? 0
+            for format in sorted {
+                guard let streamString = format["url"] as? String,
+                      let streamURL = URL(string: streamString),
+                      let mimeType = format["mimeType"] as? String,
+                      let kind = SupportedMedia.kind(forMIME: mimeType) else { continue }
+
+                let expected = Int64(format["contentLength"] as? String ?? "") ?? 0
+                print("YouTubeResolver: selected format \(format["itag"] ?? "?") \(mimeType) bitrate=\(format["bitrate"] ?? 0)")
                 return (streamURL, title, kind, expected)
             }
         }
