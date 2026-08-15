@@ -30,7 +30,7 @@ struct AppShellView: View {
                 .tag(AppTab.nowPlaying)
         }
         .accentColor(.primary)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .safeAreaInset(edge: .top, spacing: 0) {
             if playback.currentItem != nil, selectedTab != .nowPlaying {
                 MiniPlayerBar {
                     selectedTab = .nowPlaying

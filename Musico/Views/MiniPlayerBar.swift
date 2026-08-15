@@ -11,7 +11,7 @@ struct MiniPlayerBar: View {
             HStack(spacing: 12) {
                 Button(action: onOpenNowPlaying) {
                     HStack(spacing: 12) {
-                        MediaArtworkView(item: item, size: 44)
+                        MediaArtworkView(item: item, size: 40)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.title)
                                 .font(.subheadline.weight(.semibold))
@@ -29,16 +29,16 @@ struct MiniPlayerBar: View {
 
                 Button { playback.togglePlayback() } label: {
                     Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title3)
-                        .frame(width: 44, height: 44)
+                        .font(.body.weight(.semibold))
+                        .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(playback.isPlaying ? "Pause" : "Play")
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(Color(UIColor.secondarySystemGroupedBackground))
-            .overlay(Divider(), alignment: .top)
+            .overlay(Divider(), alignment: .bottom)
         } else {
             EmptyView()
         }
