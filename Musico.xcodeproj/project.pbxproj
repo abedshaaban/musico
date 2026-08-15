@@ -29,6 +29,7 @@
 		A10000000000000000000014 /* PlayerVisualStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* PlayerVisualStyle.swift */; };
 		A10000000000000000000015 /* NowPlayingPlayerVisual.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* NowPlayingPlayerVisual.swift */; };
 		A10000000000000000000016 /* CompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* CompatibilityTests.swift */; };
+		A10000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -67,6 +68,7 @@
 		B10000000000000000000017 /* NowPlayingPlayerVisual.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingPlayerVisual.swift; sourceTree = "<group>"; };
 		B10000000000000000000018 /* CompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompatibilityTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000019 /* MusicoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MusicoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000000000000000000001A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -172,7 +174,10 @@
 		};
 		D10000000000000000000009 /* Resources */ = {
 			isa = PBXGroup;
-			children = (B1000000000000000000000C /* Info.plist */,);
+			children = (
+				B1000000000000000000001A /* Assets.xcassets */,
+				B1000000000000000000000C /* Info.plist */,
+			);
 			path = Resources;
 			sourceTree = "<group>";
 		};
@@ -262,6 +267,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000017 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -358,6 +364,7 @@
 		F10000000000000000000005 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
@@ -378,6 +385,7 @@
 		F10000000000000000000006 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;

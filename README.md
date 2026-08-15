@@ -27,6 +27,14 @@ For a Debug build:
 
 The result is written to `build/Build/Products/Release-iphoneos/Musico.app` (or the corresponding Debug directory). An unsigned build must be signed before normal installation on an iPhone.
 
+Regenerate every iPhone AppIcon size from the selected Spatial Pulse master:
+
+```bash
+./scripts/generate-app-icons.sh
+```
+
+You can also pass another square, opaque image of at least 1024x1024 as the first argument.
+
 ## Background playback and external controls
 
 - Audio keeps playing while the display is locked or the app is in the background.
