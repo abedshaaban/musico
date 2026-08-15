@@ -5,6 +5,7 @@ struct ArtistComboField: View {
     @EnvironmentObject private var library: LibraryStore
     @Binding var artist: String
 
+    @FocusState private var isFocused: Bool
     @State private var isShowingSuggestions = false
 
     private var trimmedArtist: String {
@@ -27,10 +28,12 @@ struct ArtistComboField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField(musicoPrompt: "Artist", text: $artist, onEditingChanged: { editing in
-                isShowingSuggestions = editing
-            })
-            .musicoFormTextField()
+            TextField(musicoPrompt: "Artist", text: $artist)
+                .musicoFormTextField()
+                .focused($isFocused)
+                .onChange(of: isFocused) { focused in
+                    isShowingSuggestions = focused
+                }
 
             if showsSuggestionList {
                 VStack(alignment: .leading, spacing: 0) {
@@ -42,6 +45,7 @@ struct ArtistComboField: View {
                         ) {
                             artist = trimmedArtist
                             isShowingSuggestions = false
+                            isFocused = false
                         }
                     }
 
@@ -55,6 +59,7 @@ struct ArtistComboField: View {
                                 ) {
                                     artist = name
                                     isShowingSuggestions = false
+                                    isFocused = false
                                 }
                             }
                         }
