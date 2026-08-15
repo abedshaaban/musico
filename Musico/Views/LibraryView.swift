@@ -170,14 +170,30 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Menu {
-                        Picker("Sort By", selection: $sortRaw) {
+                        Menu("Sort By") {
                             ForEach(LibrarySortOption.allCases) { option in
-                                Text(option.label).tag(option.rawValue)
+                                Button {
+                                    sortRaw = option.rawValue
+                                } label: {
+                                    if sortOption == option {
+                                        Label(option.label, systemImage: "checkmark")
+                                    } else {
+                                        Text(option.label)
+                                    }
+                                }
                             }
                         }
-                        Picker("Show", selection: $filterRaw) {
+                        Menu("Show") {
                             ForEach(MediaKindFilter.allCases) { option in
-                                Text(option.label).tag(option.rawValue)
+                                Button {
+                                    filterRaw = option.rawValue
+                                } label: {
+                                    if kindFilter == option {
+                                        Label(option.label, systemImage: "checkmark")
+                                    } else {
+                                        Text(option.label)
+                                    }
+                                }
                             }
                         }
                     } label: {

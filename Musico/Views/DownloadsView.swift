@@ -24,6 +24,12 @@ struct DownloadsView: View {
                                             Text("Cancel")
                                         }
                                         .tint(.orange)
+
+                                        Button(role: .destructive) {
+                                            downloads.remove(record)
+                                        } label: {
+                                            Text("Remove")
+                                        }
                                     } else if record.state == .failed || record.state == .cancelled {
                                         Button {
                                             downloads.retry(record)
@@ -31,12 +37,18 @@ struct DownloadsView: View {
                                             Text("Retry")
                                         }
                                         .tint(.blue)
-                                    }
 
-                                    Button(role: .destructive) {
-                                        downloads.remove(record)
-                                    } label: {
-                                        Text("Remove")
+                                        Button(role: .destructive) {
+                                            downloads.remove(record)
+                                        } label: {
+                                            Text("Remove")
+                                        }
+                                    } else {
+                                        Button(role: .destructive) {
+                                            downloads.remove(record)
+                                        } label: {
+                                            Text("Remove")
+                                        }
                                     }
                                 }
                         }

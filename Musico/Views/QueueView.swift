@@ -60,8 +60,8 @@ struct QueueView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                if !playback.queue.isEmpty {
-                    ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .primaryAction) {
+                    if !playback.queue.isEmpty {
                         EditButton()
                     }
                 }

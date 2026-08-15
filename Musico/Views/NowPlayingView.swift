@@ -105,8 +105,8 @@ struct NowPlayingView: View {
             .navigationTitle("Now Playing")
             .musicoInlineNavigationTitle()
             .toolbar {
-                if playback.currentItem != nil {
-                    ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .primaryAction) {
+                    if playback.currentItem != nil {
                         Menu {
                             Button { isQueuePresented = true } label: {
                                 Label("Up Next", systemImage: "list.bullet")

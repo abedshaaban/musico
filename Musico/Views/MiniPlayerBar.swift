@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct MiniPlayerBar: View {
     @EnvironmentObject private var playback: PlaybackController
@@ -36,10 +37,10 @@ struct MiniPlayerBar: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
-            .background(.bar)
-            .overlay(alignment: .top) {
-                Divider()
-            }
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .overlay(Divider(), alignment: .top)
+        } else {
+            EmptyView()
         }
     }
 }

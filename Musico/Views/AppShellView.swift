@@ -35,6 +35,8 @@ struct AppShellView: View {
                 MiniPlayerBar {
                     selectedTab = .nowPlaying
                 }
+            } else {
+                EmptyView()
             }
         }
     }
