@@ -13,8 +13,7 @@ struct MediaArtworkView: View {
 
     var body: some View {
         Group {
-            if let url = library.artworkURL(for: item),
-               let uiImage = UIImage(contentsOfFile: url.path) {
+            if let uiImage = library.artworkImage(for: item, targetSize: size) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
@@ -37,8 +36,7 @@ struct LargeMediaArtworkView: View {
 
     var body: some View {
         Group {
-            if let url = library.artworkURL(for: item),
-               let uiImage = UIImage(contentsOfFile: url.path) {
+            if let uiImage = library.artworkImage(for: item, targetSize: 420) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()

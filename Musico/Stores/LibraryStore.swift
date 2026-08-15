@@ -1,5 +1,7 @@
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
+import UIKit
 
 @MainActor
 final class LibraryStore: ObservableObject {
@@ -9,7 +11,12 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var knownArtists: [String] = []
     @Published var lastError: String?
 
+    private let artworkCache = NSCache<NSString, UIImage>()
+
     init() {
+        // Keep decoded artwork bounded on memory-constrained devices such as iPhone 7.
+        artworkCache.totalCostLimit = 24 * 1024 * 1024
+        artworkCache.countLimit = 80
         load()
     }
 
@@ -21,6 +28,35 @@ final class LibraryStore: ObservableObject {
         guard let filename = item.artworkFilename else { return nil }
         let url = AppPaths.artwork.appendingPathComponent(filename)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    func artworkImage(for item: LibraryItem, targetSize: CGFloat) -> UIImage? {
+        guard let filename = item.artworkFilename,
+              let url = artworkURL(for: item) else { return nil }
+
+        let maximumPixels = min(max(Int(targetSize * UIScreen.main.scale), 64), 1_200)
+        let cacheKey = "\(filename)|\(maximumPixels)" as NSString
+        if let cached = artworkCache.object(forKey: cacheKey) { return cached }
+
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceShouldCacheImmediately: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maximumPixels
+                ] as CFDictionary
+              ) else { return nil }
+
+        let decoded = UIImage(cgImage: image, scale: UIScreen.main.scale, orientation: .up)
+        artworkCache.setObject(decoded, forKey: cacheKey, cost: image.bytesPerRow * image.height)
+        return decoded
+    }
+
+    func clearArtworkCache() {
+        artworkCache.removeAllObjects()
     }
 
     func recentlyPlayedItems() -> [LibraryItem] {
@@ -100,6 +136,11 @@ final class LibraryStore: ObservableObject {
                     let destinationURL = destination.appendingPathComponent(storedName)
                     try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
 
+                    guard await MediaMetadataExtractor.isPlayable(destinationURL) else {
+                        try? FileManager.default.removeItem(at: destinationURL)
+                        continue
+                    }
+
                     let originalName = values.name ?? sourceURL.lastPathComponent
                     let fallbackTitle = sourceURL.deletingPathExtension().lastPathComponent
                     let metadata = await MediaMetadataExtractor.extract(from: destinationURL)
@@ -147,31 +188,39 @@ final class LibraryStore: ObservableObject {
         kind: MediaKind,
         originalFilename: String,
         thumbnailURL: URL? = nil
-    ) {
+    ) async {
         let mediaURL = AppPaths.media.appendingPathComponent(storedFilename)
-        Task {
-            let metadata = await MediaMetadataExtractor.extract(from: mediaURL)
-            var artworkFilename: String?
-            if let artworkData = metadata.artworkData {
-                artworkFilename = try? MediaMetadataExtractor.saveArtwork(artworkData, to: AppPaths.artwork)
-            } else if let thumbnailURL {
-                artworkFilename = await downloadArtwork(from: thumbnailURL)
-            }
+        let metadata = await MediaMetadataExtractor.extract(from: mediaURL)
+        var artworkFilename: String?
+        if let artworkData = metadata.artworkData {
+            artworkFilename = try? MediaMetadataExtractor.saveArtwork(artworkData, to: AppPaths.artwork)
+        }
 
-            let item = LibraryItem(
-                id: UUID(),
-                title: metadata.title?.isEmpty == false ? metadata.title! : (title.isEmpty ? "Untitled" : title),
-                artist: metadata.artist?.isEmpty == false ? metadata.artist! : "Unknown Artist",
-                kind: kind,
-                localFilename: storedFilename,
-                originalFilename: originalFilename,
-                addedAt: Date(),
-                artworkFilename: artworkFilename
-            )
-            items.insert(item, at: 0)
-            items.sort { $0.addedAt > $1.addedAt }
-            registerArtist(item.artist)
-            save()
+        let item = LibraryItem(
+            id: UUID(),
+            title: metadata.title?.isEmpty == false ? metadata.title! : (title.isEmpty ? "Untitled" : title),
+            artist: metadata.artist?.isEmpty == false ? metadata.artist! : "Unknown Artist",
+            kind: kind,
+            localFilename: storedFilename,
+            originalFilename: originalFilename,
+            addedAt: Date(),
+            artworkFilename: artworkFilename
+        )
+        items.insert(item, at: 0)
+        items.sort { $0.addedAt > $1.addedAt }
+        registerArtist(item.artist)
+        save()
+
+        // Thumbnail enrichment is optional. The durable library entry above must exist
+        // before the background-session completion handler is released.
+        if artworkFilename == nil, let thumbnailURL {
+            Task { [weak self] in
+                guard let self, let downloaded = await downloadArtwork(from: thumbnailURL),
+                      let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+                items[index].artworkFilename = downloaded
+                clearArtworkCache()
+                save()
+            }
         }
     }
 
@@ -190,6 +239,7 @@ final class LibraryStore: ObservableObject {
                 try? FileManager.default.removeItem(at: AppPaths.artwork.appendingPathComponent(previous))
             }
             items[index].artworkFilename = filename
+            clearArtworkCache()
             save()
         } catch {
             lastError = "Cover image could not be saved: \(error.localizedDescription)"
@@ -240,6 +290,7 @@ final class LibraryStore: ObservableObject {
             try? FileManager.default.removeItem(at: AppPaths.artwork.appendingPathComponent(artworkFilename))
         }
         items.removeAll { $0.id == item.id }
+        clearArtworkCache()
         recentlyPlayedIDs.removeAll { $0 == item.id }
         for index in playlists.indices {
             playlists[index].itemIDs.removeAll { $0 == item.id }

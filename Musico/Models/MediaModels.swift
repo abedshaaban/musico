@@ -212,12 +212,12 @@ enum SupportedMedia {
     static let audioMIMETypes: Set<String> = [
         "audio/mpeg", "audio/mp3", "audio/mp4", "audio/aac", "audio/aacp",
         "audio/x-m4a", "audio/m4a", "audio/wav", "audio/x-wav", "audio/wave",
-        "audio/aiff", "audio/x-aiff", "audio/x-caf", "audio/flac", "audio/x-flac"
+        "audio/aiff", "audio/x-aiff", "audio/x-caf", "audio/flac", "audio/x-flac",
+        "audio/alac", "audio/x-alac", "audio/ac3", "audio/eac3"
     ]
 
-static let videoMIMETypes: Set<String> = [
-        "video/mp4", "video/quicktime", "video/x-m4v", "video/mpeg", "video/3gpp",
-        "video/webm", "audio/webm", "audio/mp4", "video/x-flv"
+    static let videoMIMETypes: Set<String> = [
+        "video/mp4", "video/quicktime", "video/x-m4v", "video/3gpp"
     ]
 
     static let audioExtensions: Set<String> = [
@@ -225,7 +225,7 @@ static let videoMIMETypes: Set<String> = [
     ]
 
     static let videoExtensions: Set<String> = [
-        "mp4", "mov", "m4v", "mpg", "mpeg", "3gp", "webm"
+        "mp4", "mov", "m4v", "3gp"
     ]
 
     static func normalizedMIME(_ raw: String?) -> String? {

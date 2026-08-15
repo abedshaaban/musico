@@ -13,8 +13,10 @@ final class DownloadManager: NSObject, ObservableObject {
     @Published private(set) var records: [DownloadRecord] = []
 
     private weak var library: LibraryStore?
+    private var progressPersistenceTask: Task<Void, Never>?
 
-    private static let sessionIdentifier = "com.abedshaaban.Musico.downloads"
+    static let sessionIdentifier = "com.abedshaaban.Musico.downloads"
+    private nonisolated let postProcessingGate = BackgroundPostProcessingGate()
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
@@ -22,14 +24,6 @@ final class DownloadManager: NSObject, ObservableObject {
         config.sessionSendsLaunchEvents = true
         config.waitsForConnectivity = true
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
-    }()
-
-    // A short-lived session used only for HEAD/probe validation requests.
-    private let probeSession: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 15
-        config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: config)
     }()
 
     // Hosts that serve protected streams behind manifests / DRM / terms that forbid
@@ -41,17 +35,14 @@ final class DownloadManager: NSObject, ObservableObject {
         "dailymotion.", "netflix.", "twitch.", "hulu.", "disneyplus.", "primevideo."
     ]
 
-    override init() {
+    init(library: LibraryStore) {
+        self.library = library
         super.init()
         loadRecords()
         // Instantiate the background session so any tasks that completed while the app
         // was suspended deliver their delegate callbacks and get registered.
         _ = session
-    }
-
-    /// Wire the library the manager registers completed downloads into. Called once at launch.
-    func configure(library: LibraryStore) {
-        self.library = library
+        reconcilePersistedRecordsWithBackgroundTasks()
     }
 
     // MARK: - Public actions
@@ -233,40 +224,34 @@ final class DownloadManager: NSObject, ObservableObject {
         request.httpMethod = method
         if rangeFirstByte { request.setValue("bytes=0-0", forHTTPHeaderField: "Range") }
 
-        var http: HTTPURLResponse?
         do {
-            let (_, response) = try await probeSession.data(for: request)
-            http = response as? HTTPURLResponse
-            if let http = http, !(200..<400).contains(http.statusCode) {
+            let http = try await HeaderOnlyProbe.response(for: request)
+            if !(200..<400).contains(http.statusCode) {
                 Self.debugLog("inspect: status code \(http.statusCode) for \(url.absoluteString)")
                 return .unreachable
             }
+
+            // Resolve media kind from the server's Content-Type, then fall back to the
+            // URL's file extension so correctly-typed but header-sparse servers still work.
+            let kind = SupportedMedia.kind(forMIME: http.value(forHTTPHeaderField: "Content-Type"))
+                ?? SupportedMedia.kind(forExtension: url.pathExtension)
+            guard let mediaKind = kind else {
+                let mime = SupportedMedia.normalizedMIME(http.value(forHTTPHeaderField: "Content-Type"))
+                if mime?.hasPrefix("text/") == true {
+                    return .webPage
+                }
+                return .unreachable
+            }
+
+            let title = (http.suggestedFilename.map { Self.title(fromFilename: $0) })
+                ?? Self.suggestedTitle(from: url)
+
+            let expected = Self.expectedLength(from: http)
+            return .resolved(ResolvedMedia(title: title, kind: mediaKind, expectedBytes: expected))
         } catch {
             Self.debugLog("inspect: error \(error) for \(url.absoluteString)")
             return .unreachable
         }
-        guard let http = http,
-              (200..<400).contains(http.statusCode) else {
-            return .unreachable
-        }
-
-        // Resolve media kind from the server's Content-Type, then fall back to the
-        // URL's file extension so correctly-typed but header-sparse servers still work.
-        let kind = SupportedMedia.kind(forMIME: http.value(forHTTPHeaderField: "Content-Type"))
-            ?? SupportedMedia.kind(forExtension: url.pathExtension)
-        guard let mediaKind = kind else {
-            let mime = SupportedMedia.normalizedMIME(http.value(forHTTPHeaderField: "Content-Type"))
-            if mime?.hasPrefix("text/") == true {
-                return .webPage
-            }
-            return .unreachable
-        }
-
-        let title = (http.suggestedFilename.map { Self.title(fromFilename: $0) })
-            ?? Self.suggestedTitle(from: url)
-
-        let expected = Self.expectedLength(from: http)
-        return .resolved(ResolvedMedia(title: title, kind: mediaKind, expectedBytes: expected))
     }
 
 
@@ -295,10 +280,36 @@ final class DownloadManager: NSObject, ObservableObject {
         persist()
     }
 
-    private func update(_ recordID: UUID, _ mutate: (inout DownloadRecord) -> Void) {
+    private func update(
+        _ recordID: UUID,
+        persistImmediately: Bool = true,
+        _ mutate: (inout DownloadRecord) -> Void
+    ) {
         guard let index = records.firstIndex(where: { $0.id == recordID }) else { return }
         mutate(&records[index])
-        persist()
+        if persistImmediately {
+            progressPersistenceTask?.cancel()
+            progressPersistenceTask = nil
+            persist()
+        } else {
+            scheduleProgressPersist()
+        }
+    }
+
+    /// Progress delegates can fire many times per second. Keep the published model live,
+    /// but coalesce atomic JSON writes so downloads do not churn storage and CPU.
+    private func scheduleProgressPersist() {
+        progressPersistenceTask?.cancel()
+        progressPersistenceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.persist()
+            self.progressPersistenceTask = nil
+        }
     }
 
     private func persist() {
@@ -317,16 +328,36 @@ final class DownloadManager: NSObject, ObservableObject {
               let persisted = try? JSONDecoder.musico.decode(PersistedDownloads.self, from: data) else {
             return
         }
-        // Downloads that were mid-flight when the app was killed can no longer resume
-        // (the tasks are gone); surface them as failed so the user can retry.
-        records = persisted.records.map { record in
-            guard record.state == .validating || record.state == .queued || record.state == .downloading else {
-                return record
+        records = persisted.records
+    }
+
+    /// Background URLSession tasks survive system termination. Reconcile persisted UI
+    /// state with the recreated session before deciding that an active record is stale.
+    private func reconcilePersistedRecordsWithBackgroundTasks() {
+        let persistedActiveIDs = Set(records.filter(\.state.isActive).map(\.id))
+        session.getAllTasks { [weak self] tasks in
+            let activeIDs = Set(tasks.compactMap { task in
+                task.taskDescription.flatMap(UUID.init)
+            })
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                var changed = false
+                for index in records.indices
+                where persistedActiveIDs.contains(records[index].id) && records[index].state.isActive {
+                    if activeIDs.contains(records[index].id) {
+                        if records[index].state != .downloading {
+                            records[index].state = .downloading
+                            records[index].detail = nil
+                            changed = true
+                        }
+                    } else {
+                        records[index].state = .failed
+                        records[index].detail = "Interrupted. Tap to retry."
+                        changed = true
+                    }
+                }
+                if changed { persist() }
             }
-            var stale = record
-            stale.state = .failed
-            stale.detail = "Interrupted. Tap to retry."
-            return stale
         }
     }
 
@@ -383,7 +414,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
         guard let recordID = downloadTask.taskDescription.flatMap(UUID.init) else { return }
         let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : 0
         Task { @MainActor in
-            update(recordID) {
+            update(recordID, persistImmediately: false) {
                 $0.receivedBytes = totalBytesWritten
                 if expected > 0 { $0.totalBytes = expected }
                 if $0.totalBytes > 0 {
@@ -403,6 +434,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
         // once this method returns, so move it synchronously before hopping to the main
         // actor to register it.
         guard let recordID = downloadTask.taskDescription.flatMap(UUID.init) else { return }
+        postProcessingGate.begin()
 
         let http = downloadTask.response as? HTTPURLResponse
         let mimeKind = SupportedMedia.kind(forMIME: http?.value(forHTTPHeaderField: "Content-Type"))
@@ -422,10 +454,6 @@ extension DownloadManager: URLSessionDownloadDelegate {
             switch (kind, mime) {
             case (.video, .some("video/mp4")), (.audio, .some("audio/mp4")):
                 ext = "mp4"
-            case (.video, .some("video/webm")), (.audio, .some("audio/webm")):
-                ext = "webm"
-            case (.audio, .some("audio/webm")):
-                ext = "weba"
             case (.audio, .some("audio/mpeg")), (.audio, .some("audio/mp3")):
                 ext = "mp3"
             case (.audio, _):
@@ -447,36 +475,32 @@ extension DownloadManager: URLSessionDownloadDelegate {
                     $0.state = .failed
                     $0.detail = "Couldn't save the downloaded file."
                 }
+                finishPostProcessing()
             }
             return
         }
 
         let originalName = http?.suggestedFilename ?? sourceURL?.lastPathComponent ?? storedName
 
-        // Validate the container is actually playable before registering it.
-        // Run validation on a background queue and avoid blocking with a semaphore.
-        DispatchQueue.global(qos: .default).async {
-            let asset = AVAsset(url: destination)
-            asset.loadValuesAsynchronously(forKeys: ["playable"]) {
-                var error: NSError?
-                let status = asset.statusOfValue(forKey: "playable", error: &error)
-                let isPlayable = status == .loaded && asset.isPlayable
-
-                guard isPlayable else {
-                    try? FileManager.default.removeItem(at: destination)
-                    Task { @MainActor in
-                        self.update(recordID) {
-                            $0.state = .failed
-                            $0.detail = "The downloaded file isn't a playable audio or video container."
-                        }
-                    }
-                    return
+        // Keep the system's background completion handler gated until local validation
+        // and durable library registration have both finished.
+        Task { @MainActor in
+            guard await MediaMetadataExtractor.isPlayable(destination) else {
+                try? FileManager.default.removeItem(at: destination)
+                update(recordID) {
+                    $0.state = .failed
+                    $0.detail = "The downloaded file isn't a playable audio or video container."
                 }
-
-                Task { @MainActor in
-                    self.registerCompleted(recordID: recordID, storedName: storedName, kind: kind, originalName: originalName)
-                }
+                finishPostProcessing()
+                return
             }
+            await registerCompleted(
+                recordID: recordID,
+                storedName: storedName,
+                kind: kind,
+                originalName: originalName
+            )
+            finishPostProcessing()
         }
     }
 
@@ -499,18 +523,28 @@ extension DownloadManager: URLSessionDownloadDelegate {
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        // Let the system snapshot the UI and finish the background launch.
-        Task { @MainActor in
-            AppDelegate.shared?.backgroundCompletionHandler?()
-            AppDelegate.shared?.backgroundCompletionHandler = nil
+        if postProcessingGate.markSystemEventsFinished() {
+            Task { @MainActor in finishBackgroundEvents() }
         }
     }
 
     @MainActor
-    private func registerCompleted(recordID: UUID, storedName: String, kind: MediaKind, originalName: String) {
+    private func registerCompleted(
+        recordID: UUID,
+        storedName: String,
+        kind: MediaKind,
+        originalName: String
+    ) async {
         let record = records.first { $0.id == recordID }
         let title = record?.title ?? Self.title(fromFilename: originalName)
-        library?.adoptDownloadedFile(
+        guard let library else {
+            update(recordID) {
+                $0.state = .failed
+                $0.detail = "The downloaded file couldn't be registered in the library."
+            }
+            return
+        }
+        await library.adoptDownloadedFile(
             storedFilename: storedName,
             title: title,
             kind: kind,
@@ -523,6 +557,136 @@ extension DownloadManager: URLSessionDownloadDelegate {
             $0.mediaKind = kind
             $0.detail = "Saved to your library."
         }
+    }
+
+    @MainActor
+    private func finishPostProcessing() {
+        if postProcessingGate.finishOne() {
+            finishBackgroundEvents()
+        }
+    }
+
+    @MainActor
+    private func finishBackgroundEvents() {
+        guard let completion = AppDelegate.shared?.backgroundCompletionHandler else { return }
+        AppDelegate.shared?.backgroundCompletionHandler = nil
+        completion()
+    }
+}
+
+// MARK: - Background coordination
+
+/// Thread-safe gate that delays the UIKit background-session completion callback until
+/// all asynchronous local post-processing initiated by delegate callbacks has finished.
+final class BackgroundPostProcessingGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingCount = 0
+    private var systemEventsFinished = false
+
+    func begin() {
+        lock.lock()
+        pendingCount += 1
+        lock.unlock()
+    }
+
+    func markSystemEventsFinished() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if pendingCount == 0 {
+            systemEventsFinished = false
+            return true
+        }
+        systemEventsFinished = true
+        return false
+    }
+
+    func finishOne() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard pendingCount > 0 else { return false }
+        pendingCount -= 1
+        guard pendingCount == 0, systemEventsFinished else { return false }
+        systemEventsFinished = false
+        return true
+    }
+}
+
+/// Performs a request only through response headers. The task is cancelled before body
+/// delivery, so a server that ignores a one-byte Range request cannot fill app memory.
+enum HeaderOnlyProbe {
+    static func response(
+        for request: URLRequest,
+        protocolClasses: [AnyClass]? = nil
+    ) async throws -> HTTPURLResponse {
+        try await withCheckedThrowingContinuation { continuation in
+            let probe = HeaderProbeRequest(
+                continuation: continuation,
+                protocolClasses: protocolClasses
+            )
+            probe.start(request)
+        }
+    }
+}
+
+private final class HeaderProbeRequest: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<HTTPURLResponse, Error>?
+    private var session: URLSession?
+    private let protocolClasses: [AnyClass]?
+
+    init(
+        continuation: CheckedContinuation<HTTPURLResponse, Error>,
+        protocolClasses: [AnyClass]?
+    ) {
+        self.continuation = continuation
+        self.protocolClasses = protocolClasses
+    }
+
+    func start(_ request: URLRequest) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        if let protocolClasses { configuration.protocolClasses = protocolClasses }
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        self.session = session
+        session.dataTask(with: request).resume()
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        completionHandler(.cancel)
+        guard let http = response as? HTTPURLResponse else {
+            finish(.failure(URLError(.badServerResponse)))
+            return
+        }
+        finish(.success(http))
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        finish(.failure(error ?? URLError(.badServerResponse)))
+    }
+
+    private func finish(_ result: Result<HTTPURLResponse, Error>) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        let session = self.session
+        self.session = nil
+        lock.unlock()
+
+        continuation.resume(with: result)
+        session?.invalidateAndCancel()
     }
 }
 

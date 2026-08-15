@@ -4,9 +4,22 @@ import SwiftUI
 struct MusicoApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-    @StateObject private var library = LibraryStore()
-    @StateObject private var downloads = DownloadManager()
-    @StateObject private var playback = PlaybackController()
+    @StateObject private var library: LibraryStore
+    @StateObject private var downloads: DownloadManager
+    @StateObject private var playback: PlaybackController
+
+    init() {
+        // Wire services during launch rather than from a view callback. A background
+        // URLSession relaunch may not display a scene before its delegate events arrive.
+        let library = LibraryStore()
+        let downloads = DownloadManager(library: library)
+        let playback = PlaybackController()
+        playback.configure(library: library)
+
+        _library = StateObject(wrappedValue: library)
+        _downloads = StateObject(wrappedValue: downloads)
+        _playback = StateObject(wrappedValue: playback)
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -14,10 +27,6 @@ struct MusicoApp: App {
                 .environmentObject(library)
                 .environmentObject(downloads)
                 .environmentObject(playback)
-                .onAppear {
-                    downloads.configure(library: library)
-                    playback.configure(library: library)
-                }
         }
     }
 }

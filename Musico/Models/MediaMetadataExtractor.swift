@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import ImageIO
 import UIKit
 
 enum MediaMetadataExtractor {
@@ -34,6 +35,19 @@ enum MediaMetadataExtractor {
         return metadata
     }
 
+    /// Uses AVFoundation's runtime decoder/container check rather than trusting a file
+    /// extension or MIME type alone.
+    static func isPlayable(_ url: URL) async -> Bool {
+        let asset = AVURLAsset(url: url)
+        return await withCheckedContinuation { continuation in
+            asset.loadValuesAsynchronously(forKeys: ["playable"]) {
+                var error: NSError?
+                let status = asset.statusOfValue(forKey: "playable", error: &error)
+                continuation.resume(returning: status == .loaded && asset.isPlayable)
+            }
+        }
+    }
+
     static func saveArtwork(_ data: Data, to directory: URL) throws -> String {
         let normalized = normalizedJPEG(from: data) ?? data
         let filename = UUID().uuidString + ".jpg"
@@ -44,8 +58,17 @@ enum MediaMetadataExtractor {
     }
 
     private static func normalizedJPEG(from data: Data) -> Data? {
-        guard let image = UIImage(data: data) else { return nil }
-        return image.jpegData(compressionQuality: 0.85)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 1_200
+                ] as CFDictionary
+              ) else { return nil }
+        return UIImage(cgImage: image).jpegData(compressionQuality: 0.82)
     }
 
     private static func videoThumbnail(from asset: AVAsset) async -> Data? {

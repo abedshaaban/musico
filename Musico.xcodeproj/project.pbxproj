@@ -28,7 +28,18 @@
 		A10000000000000000000013 /* ArtistComboField.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* ArtistComboField.swift */; };
 		A10000000000000000000014 /* PlayerVisualStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* PlayerVisualStyle.swift */; };
 		A10000000000000000000015 /* NowPlayingPlayerVisual.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* NowPlayingPlayerVisual.swift */; };
+		A10000000000000000000016 /* CompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* CompatibilityTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		G10000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E10000000000000000000002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E10000000000000000000001;
+			remoteInfo = Musico;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		B10000000000000000000001 /* MusicoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicoApp.swift; sourceTree = "<group>"; };
@@ -54,10 +65,19 @@
 		B10000000000000000000015 /* ArtistComboField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistComboField.swift; sourceTree = "<group>"; };
 		B10000000000000000000016 /* PlayerVisualStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerVisualStyle.swift; sourceTree = "<group>"; };
 		B10000000000000000000017 /* NowPlayingPlayerVisual.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingPlayerVisual.swift; sourceTree = "<group>"; };
+		B10000000000000000000018 /* CompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompatibilityTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000019 /* MusicoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MusicoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		C10000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000004 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -71,6 +91,7 @@
 			isa = PBXGroup;
 			children = (
 				D10000000000000000000002 /* Musico */,
+				D1000000000000000000000A /* MusicoTests */,
 				D10000000000000000000008 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -142,7 +163,10 @@
 		};
 		D10000000000000000000008 /* Products */ = {
 			isa = PBXGroup;
-			children = (B1000000000000000000000D /* Musico.app */,);
+			children = (
+				B1000000000000000000000D /* Musico.app */,
+				B10000000000000000000019 /* MusicoTests.xctest */,
+			);
 			name = Products;
 			sourceTree = "<group>";
 		};
@@ -150,6 +174,14 @@
 			isa = PBXGroup;
 			children = (B1000000000000000000000C /* Info.plist */,);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		D1000000000000000000000A /* MusicoTests */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000018 /* CompatibilityTests.swift */,
+			);
+			path = MusicoTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -172,6 +204,24 @@
 			productReference = B1000000000000000000000D /* Musico.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E10000000000000000000003 /* MusicoTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F10000000000000000000009 /* Build configuration list for PBXNativeTarget "MusicoTests" */;
+			buildPhases = (
+				C10000000000000000000005 /* Sources */,
+				C10000000000000000000004 /* Frameworks */,
+				C10000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				G10000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = MusicoTests;
+			productName = MusicoTests;
+			productReference = B10000000000000000000019 /* MusicoTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -185,6 +235,10 @@
 					E10000000000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
 					};
+					E10000000000000000000003 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = E10000000000000000000001;
+					};
 				};
 			};
 			buildConfigurationList = F10000000000000000000001 /* Build configuration list for PBXProject "Musico" */;
@@ -196,12 +250,22 @@
 			productRefGroup = D10000000000000000000008 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (E10000000000000000000001 /* Musico */,);
+			targets = (
+				E10000000000000000000001 /* Musico */,
+				E10000000000000000000003 /* MusicoTests */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		C10000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000006 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -239,7 +303,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C10000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000016 /* CompatibilityTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		G10000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E10000000000000000000001 /* Musico */;
+			targetProxy = G10000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		F10000000000000000000003 /* Debug */ = {
@@ -314,6 +394,42 @@
 			};
 			name = Release;
 		};
+		F10000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.abedshaaban.MusicoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Musico.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Musico";
+			};
+			name = Debug;
+		};
+		F10000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.abedshaaban.MusicoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Musico.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Musico";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -331,6 +447,15 @@
 			buildConfigurations = (
 				F10000000000000000000005 /* Debug */,
 				F10000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F10000000000000000000009 /* Build configuration list for PBXNativeTarget "MusicoTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F10000000000000000000007 /* Debug */,
+				F10000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
