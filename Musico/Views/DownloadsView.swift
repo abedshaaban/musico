@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct DownloadsView: View {
     @EnvironmentObject private var downloads: DownloadManager
@@ -86,6 +87,7 @@ struct DownloadsView: View {
 
 private struct DownloadRow: View {
     let record: DownloadRecord
+    @State private var showingFailureDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -99,9 +101,23 @@ private struct DownloadRow: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Text(record.state.label)
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(stateColor)
+                HStack(spacing: 8) {
+                    Text(record.state.label)
+                        .font(.caption.weight(.medium))
+                        .foregroundColor(stateColor)
+
+                    if record.state == .failed {
+                        Button {
+                            showingFailureDetails = true
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.body)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.blue)
+                        .accessibilityLabel("Failure details")
+                    }
+                }
             }
 
             if record.state.isActive {
@@ -124,6 +140,9 @@ private struct DownloadRow: View {
             }
         }
         .padding(.vertical, 4)
+        .sheet(isPresented: $showingFailureDetails) {
+            DownloadFailureDetailsView(record: record)
+        }
     }
 
     private var byteSummary: String? {
@@ -143,5 +162,121 @@ private struct DownloadRow: View {
         case .downloading: return .blue
         case .validating, .queued: return .secondary
         }
+    }
+}
+
+private struct DownloadFailureDetailsView: View {
+    let record: DownloadRecord
+    @EnvironmentObject private var downloads: DownloadManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationView {
+            List {
+                Section("What happened") {
+                    Text(record.detail ?? "The download failed without a summary.")
+                        .textSelection(.enabled)
+                }
+
+                Section("Download") {
+                    detailRow("Title", record.title)
+                    detailRow("Source", record.sourceName)
+                    if let url = record.remoteURL {
+                        detailRow("URL", url.absoluteString)
+                    }
+                    detailRow("Started", Self.dateFormatter.string(from: record.createdAt))
+                    detailRow("Record ID", record.id.uuidString)
+                    if record.receivedBytes > 0 {
+                        detailRow("Received", Self.bytes(record.receivedBytes))
+                    }
+                    if record.totalBytes > 0 {
+                        detailRow("Expected", Self.bytes(record.totalBytes))
+                    }
+                }
+
+                Section("Technical details") {
+                    Text(record.diagnostic ?? "No technical details were recorded. This can happen for failures created by an older Musico build. Retry once with this build to capture them.")
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                }
+
+                if record.remoteURL != nil {
+                    Section {
+                        Button {
+                            downloads.retry(record)
+                            dismiss()
+                        } label: {
+                            Label(retryLabel, systemImage: "arrow.clockwise")
+                        }
+                    } footer: {
+                        if DownloadTransport.retryTransport(after: record.detail) == .inApp {
+                            Text("Keep Musico open until the sandbox-compatible download finishes.")
+                        }
+                    }
+                }
+
+                Section {
+                    Button {
+                        UIPasteboard.general.string = report
+                        copied = true
+                    } label: {
+                        Label(copied ? "Copied" : "Copy Failure Report", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                }
+            }
+            .navigationTitle("Failure Details")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .musicoStackNavigationStyle()
+    }
+
+    @ViewBuilder
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.subheadline)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var report: String {
+        [
+            "Musico download failure",
+            "Summary: \(record.detail ?? "Unavailable")",
+            "Title: \(record.title)",
+            "Source: \(record.sourceName)",
+            "URL: \(record.remoteURL?.absoluteString ?? "Unavailable")",
+            "Started: \(Self.dateFormatter.string(from: record.createdAt))",
+            "Record ID: \(record.id.uuidString)",
+            "Received bytes: \(record.receivedBytes)",
+            "Expected bytes: \(record.totalBytes)",
+            "Technical details:",
+            record.diagnostic ?? "Unavailable (failure may predate diagnostic capture)."
+        ].joined(separator: "\n")
+    }
+
+    private var retryLabel: String {
+        DownloadTransport.retryTransport(after: record.detail) == .inApp
+            ? "Retry in Sandbox-Compatible Mode"
+            : "Retry Download"
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    private static func bytes(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 }

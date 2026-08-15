@@ -62,6 +62,14 @@ final class CompatibilityTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testBackgroundSessionIdentifierTracksInstalledBundleIdentifier() {
+        XCTAssertEqual(
+            DownloadManager.sessionIdentifier,
+            (Bundle.main.bundleIdentifier ?? "com.abedshaaban.Musico") + ".downloads"
+        )
+    }
+
     func testBackgroundGateWaitsForAllPostProcessing() {
         let gate = BackgroundPostProcessingGate()
         gate.begin()
@@ -86,6 +94,183 @@ final class CompatibilityTests: XCTestCase {
         gate.begin()
         XCTAssertFalse(gate.finishOne())
         XCTAssertTrue(gate.markSystemEventsFinished())
+    }
+
+    func testDownloadedFileStoreCreatesDirectoryAndPreservesFile() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let source = root.appendingPathComponent("download.tmp")
+        let destination = root
+            .appendingPathComponent("Library/Application Support/Musico/Media", isDirectory: true)
+            .appendingPathComponent("saved.mp4")
+        let expected = Data("downloaded media bytes".utf8)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try expected.write(to: source)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = try DownloadedFileStore.saveTemporaryFile(at: source, to: destination)
+
+        XCTAssertNil(result.recoveredMoveFailure)
+        XCTAssertEqual(try Data(contentsOf: destination), expected)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    func testDownloadedFileStoreReportsTheUnderlyingIOError() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let missingSource = root.appendingPathComponent("missing.tmp")
+        let destination = root.appendingPathComponent("Media/saved.mp4")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertThrowsError(
+            try DownloadedFileStore.saveTemporaryFile(at: missingSource, to: destination)
+        ) { error in
+            let description = DownloadedFileStore.failureDescription(for: error)
+            XCTAssertTrue(description.userMessage.contains("temporary copy"))
+            XCTAssertTrue(description.diagnostic.contains("Move and copy downloaded file"))
+            XCTAssertTrue(description.diagnostic.contains(NSCocoaErrorDomain))
+            XCTAssertTrue(description.diagnostic.contains(missingSource.path))
+            XCTAssertTrue(description.diagnostic.contains(destination.path))
+            XCTAssertTrue(description.diagnostic.contains("Error 1:"))
+            XCTAssertTrue(description.diagnostic.contains("Error 2:"))
+        }
+    }
+
+    func testDownloadedFileStoreCopiesWhenSandboxDeniesMove() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let source = root.appendingPathComponent("background-session.tmp")
+        let destination = root.appendingPathComponent("Media/saved.mp4")
+        let expected = Data("sandboxed download".utf8)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try expected.write(to: source)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let result = try DownloadedFileStore.saveTemporaryFile(
+            at: source,
+            to: destination,
+            moveItem: { _, _ in
+                throw NSError(
+                    domain: NSCocoaErrorDomain,
+                    code: CocoaError.Code.fileWriteNoPermission.rawValue
+                )
+            }
+        )
+
+        XCTAssertNotNil(result.recoveredMoveFailure)
+        XCTAssertEqual(try Data(contentsOf: destination), expected)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    func testPermissionFailureRetriesWithInAppTransport() {
+        XCTAssertEqual(
+            DownloadTransport.retryTransport(
+                after: "Couldn't save because iOS denied access to Musico's storage."
+            ),
+            .inApp
+        )
+        XCTAssertEqual(
+            DownloadTransport.retryTransport(after: "The connection was interrupted."),
+            .background
+        )
+        XCTAssertEqual(
+            DownloadTransport.retryTransport(
+                after: "iOS blocked the background file. Tap Retry to use sandbox-compatible mode."
+            ),
+            .inApp
+        )
+        XCTAssertTrue(
+            DownloadTransport.inApp.progressDetail(for: .video)
+                .contains(DownloadTransport.keepOpenMarker)
+        )
+    }
+
+    func testExistingPermissionFailureMakesFutureDownloadsSandboxCompatible() {
+        let failed = DownloadRecord(
+            title: "Failed download",
+            sourceName: "YouTube",
+            state: .failed,
+            detail: "Couldn't save because iOS denied access to Musico's storage."
+        )
+
+        XCTAssertEqual(
+            DownloadTransport.preferredTransport(savedPreference: false, records: [failed]),
+            .inApp
+        )
+        XCTAssertEqual(
+            DownloadTransport.preferredTransport(savedPreference: true, records: []),
+            .inApp
+        )
+        XCTAssertEqual(
+            DownloadTransport.preferredTransport(savedPreference: false, records: []),
+            .background
+        )
+    }
+
+    func testDownloadRecordDecodesFailuresFromBeforeDiagnosticsWereAdded() throws {
+        struct LegacyDownloadRecord: Encodable {
+            let id = UUID()
+            let title = "Legacy failure"
+            let sourceName = "example.com"
+            let state = DownloadState.failed
+            let progress = 1.0
+            let createdAt = Date()
+            let detail: String? = "Couldn't save."
+            let remoteURL = URL(string: "https://example.com/media.mp4")
+            let mediaKind = MediaKind.video
+            let receivedBytes: Int64 = 100
+            let totalBytes: Int64 = 100
+            let thumbnailURL: URL? = nil
+        }
+
+        let data = try JSONEncoder().encode(LegacyDownloadRecord())
+        let record = try JSONDecoder().decode(DownloadRecord.self, from: data)
+
+        XCTAssertEqual(record.state, .failed)
+        XCTAssertNil(record.diagnostic)
+    }
+
+    func testDownloadDiagnosticsIncludesUnderlyingErrorAndPath() {
+        let underlying = NSError(domain: NSPOSIXErrorDomain, code: 13)
+        let error = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileReadNoPermission.rawValue,
+            userInfo: [
+                NSFilePathErrorKey: "/private/var/mobile/staged-download.tmp",
+                NSUnderlyingErrorKey: underlying
+            ]
+        )
+
+        let report = DownloadDiagnostics.report(
+            stage: "Saving",
+            error: error,
+            transport: "In-app sandbox-compatible session",
+            sourceURL: URL(string: "https://example.com/media.mp4"),
+            taskIdentifier: 7
+        )
+
+        XCTAssertTrue(report.contains("Saving"))
+        XCTAssertTrue(report.contains("In-app sandbox-compatible session"))
+        XCTAssertTrue(report.contains("/private/var/mobile/staged-download.tmp"))
+        XCTAssertTrue(report.contains("NSPOSIXErrorDomain 13"))
+    }
+
+    func testNowPlayingLayoutCompactsForIPhone7Height() {
+        let layout = NowPlayingLayoutMetrics(width: 375, height: 570)
+
+        XCTAssertTrue(layout.isCompact)
+        XCTAssertLessThanOrEqual(layout.artworkWidth, 250)
+        XCTAssertEqual(layout.sectionSpacing, 10)
+        XCTAssertEqual(layout.playButtonSize, 50)
+    }
+
+    func testNowPlayingLayoutKeepsLargeScreenPresentation() {
+        let layout = NowPlayingLayoutMetrics(width: 393, height: 760)
+
+        XCTAssertFalse(layout.isCompact)
+        XCTAssertEqual(layout.artworkWidth, 353)
+        XCTAssertEqual(layout.sectionSpacing, 20)
+        XCTAssertEqual(layout.playButtonSize, 58)
     }
 }
 

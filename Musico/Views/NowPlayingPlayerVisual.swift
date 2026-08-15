@@ -778,10 +778,13 @@ private struct CassettePlayerVisual: View {
                 .frame(width: 26, height: 26)
                 .overlay(
                     TrackArtworkFill(item: item)
+                        .frame(width: 26, height: 26)
                         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                 )
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(.trailing, 16)
         .padding(.top, 10)
         .padding(.bottom, 2)
         .overlay(alignment: .bottom) {

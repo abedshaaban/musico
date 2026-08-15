@@ -33,12 +33,35 @@ xcodebuild \
   build
 
 APP_PATH="$PROJECT_DIR/build/Build/Products/${CONFIGURATION}-iphoneos/Musico.app"
+ARTIFACTS_DIR="$PROJECT_DIR/artifacts"
 
 if [[ ! -d "$APP_PATH" ]]; then
   echo "Build completed, but the expected app was not found at: $APP_PATH" >&2
   exit 1
 fi
 
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")"
+BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")"
+IPA_PATH="$ARTIFACTS_DIR/Musico-${VERSION}-${BUILD_NUMBER}-${CONFIGURATION}.ipa"
+PACKAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/musico-ipa.XXXXXX")"
+
+cleanup() {
+  rm -rf "$PACKAGE_DIR"
+}
+trap cleanup EXIT
+
+mkdir -p "$ARTIFACTS_DIR" "$PACKAGE_DIR/Payload"
+COPYFILE_DISABLE=1 cp -R "$APP_PATH" "$PACKAGE_DIR/Payload/Musico.app"
+(
+  cd "$PACKAGE_DIR"
+  COPYFILE_DISABLE=1 /usr/bin/zip -qry "$IPA_PATH" Payload
+)
+
+/usr/bin/unzip -tq "$IPA_PATH"
+CHECKSUM="$(/usr/bin/shasum -a 256 "$IPA_PATH" | /usr/bin/awk '{print $1}')"
+
 echo
 echo "Build succeeded: $APP_PATH"
-echo "This app is unsigned and must be signed before normal iPhone installation."
+echo "IPA artifact: $IPA_PATH"
+echo "SHA-256: $CHECKSUM"
+echo "The IPA is unsigned and must be signed or installed with a compatible installer."

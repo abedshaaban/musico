@@ -14,14 +14,27 @@ final class DownloadManager: NSObject, ObservableObject {
 
     private weak var library: LibraryStore?
     private var progressPersistenceTask: Task<Void, Never>?
+    private var preferredTransport: DownloadTransport = .background
+    private static let sandboxTransportPreferenceKey = "Musico.prefersSandboxCompatibleDownloads"
 
-    static let sessionIdentifier = "com.abedshaaban.Musico.downloads"
+    static var sessionIdentifier: String {
+        (Bundle.main.bundleIdentifier ?? "com.abedshaaban.Musico") + ".downloads"
+    }
     private nonisolated let postProcessingGate = BackgroundPostProcessingGate()
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
+
+    /// Troll-style sandboxed installers may not grant access to the system background
+    /// session's staging container. This in-process session stages downloads inside the
+    /// app's own sandbox, at the cost of requiring the app to remain open.
+    private lazy var inAppSession: URLSession = {
+        let config = URLSessionConfiguration.default
         config.waitsForConnectivity = true
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
@@ -39,6 +52,13 @@ final class DownloadManager: NSObject, ObservableObject {
         self.library = library
         super.init()
         loadRecords()
+        preferredTransport = DownloadTransport.preferredTransport(
+            savedPreference: UserDefaults.standard.bool(forKey: Self.sandboxTransportPreferenceKey),
+            records: records
+        )
+        if preferredTransport == .inApp {
+            UserDefaults.standard.set(true, forKey: Self.sandboxTransportPreferenceKey)
+        }
         // Instantiate the background session so any tasks that completed while the app
         // was suspended deliver their delegate callbacks and get registered.
         _ = session
@@ -49,6 +69,10 @@ final class DownloadManager: NSObject, ObservableObject {
 
     /// Validate a user-supplied URL, then queue a background download if it checks out.
     func addFromURL(_ rawInput: String) async {
+        await addFromURL(rawInput, transport: preferredTransport)
+    }
+
+    private func addFromURL(_ rawInput: String, transport: DownloadTransport) async {
         let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let url = Self.sanitizedURL(from: trimmed) else {
@@ -69,7 +93,7 @@ final class DownloadManager: NSObject, ObservableObject {
                 insertFailed(title: "Invalid YouTube link", detail: "The link doesn't contain a valid YouTube video ID.")
                 return
             }
-            await addYouTubeVideo(id: videoID, sourceURL: url)
+            await addYouTubeVideo(id: videoID, sourceURL: url, transport: transport)
             return
         }
 
@@ -95,13 +119,17 @@ final class DownloadManager: NSObject, ObservableObject {
                 $0.mediaKind = resolved.kind
                 $0.totalBytes = resolved.expectedBytes
                 $0.state = .downloading
-                $0.detail = "Downloading \(resolved.kind.label.lowercased())…"
+                $0.detail = transport.progressDetail(for: resolved.kind)
             }
-            startTask(for: record.id, url: url)
+            startTask(for: record.id, url: url, transport: transport)
         }
     }
 
-    private func addYouTubeVideo(id videoID: String, sourceURL: URL) async {
+    private func addYouTubeVideo(
+        id videoID: String,
+        sourceURL: URL,
+        transport: DownloadTransport
+    ) async {
         let record = DownloadRecord(
             title: "YouTube Video",
             sourceName: "YouTube",
@@ -120,9 +148,9 @@ final class DownloadManager: NSObject, ObservableObject {
                 $0.totalBytes = resolved.expectedBytes
                 $0.thumbnailURL = resolved.thumbnailURL
                 $0.state = .downloading
-                $0.detail = "Downloading \(resolved.kind.label.lowercased())…"
+                $0.detail = transport.progressDetail(for: resolved.kind)
             }
-            startTask(for: record.id, url: resolved.url)
+            startTask(for: record.id, url: resolved.url, transport: transport)
         } catch {
             update(record.id) {
                 $0.state = .failed
@@ -143,8 +171,9 @@ final class DownloadManager: NSObject, ObservableObject {
 
     func retry(_ record: DownloadRecord) {
         guard let raw = record.remoteURL?.absoluteString else { return }
+        let transport = DownloadTransport.retryTransport(after: record.detail)
         remove(record)
-        Task { await addFromURL(raw) }
+        Task { await addFromURL(raw, transport: transport) }
     }
 
     func remove(_ record: DownloadRecord) {
@@ -212,9 +241,9 @@ final class DownloadManager: NSObject, ObservableObject {
         "This link points to a web page, not a direct audio or video file. Paste a link that ends in .mp3, .m4a, .mp4, or similar."
 
     /// Set to false to hide Musico's debug prints.
-    private static let verboseLogging = true
+    private nonisolated static let verboseLogging = true
 
-    private static func debugLog(_ message: String) {
+    private nonisolated static func debugLog(_ message: String) {
         guard verboseLogging else { return }
         print(message)
     }
@@ -257,16 +286,29 @@ final class DownloadManager: NSObject, ObservableObject {
 
     // MARK: - Downloading
 
-    private func startTask(for recordID: UUID, url: URL) {
-        let task = session.downloadTask(with: url)
+    private func startTask(
+        for recordID: UUID,
+        url: URL,
+        transport: DownloadTransport
+    ) {
+        let task = transport == .background
+            ? session.downloadTask(with: url)
+            : inAppSession.downloadTask(with: url)
         task.taskDescription = recordID.uuidString
         task.resume()
     }
 
     private func findTask(for recordID: UUID, _ body: @escaping (URLSessionTask?) -> Void) {
+        let inAppSession = inAppSession
         session.getAllTasks { tasks in
             let match = tasks.first { $0.taskDescription == recordID.uuidString }
-            body(match)
+            guard match == nil else {
+                body(match)
+                return
+            }
+            inAppSession.getAllTasks { inAppTasks in
+                body(inAppTasks.first { $0.taskDescription == recordID.uuidString })
+            }
         }
     }
 
@@ -420,7 +462,10 @@ extension DownloadManager: URLSessionDownloadDelegate {
                 if $0.totalBytes > 0 {
                     $0.progress = min(Double(totalBytesWritten) / Double($0.totalBytes), 1)
                 }
-                if $0.state == .downloading { $0.detail = nil }
+                if $0.state == .downloading,
+                   $0.detail?.contains(DownloadTransport.keepOpenMarker) != true {
+                    $0.detail = nil
+                }
             }
         }
     }
@@ -465,15 +510,36 @@ extension DownloadManager: URLSessionDownloadDelegate {
         let storedName = UUID().uuidString + "." + ext
         let destination = AppPaths.media.appendingPathComponent(storedName)
 
-        AppPaths.ensureDirectories()
         do {
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: location, to: destination)
+            try AppPaths.createDirectories()
+            let saveResult = try DownloadedFileStore.saveTemporaryFile(
+                at: location,
+                to: destination
+            )
+            if let moveFailure = saveResult.recoveredMoveFailure {
+                Self.debugLog("download save: move failed; copy fallback succeeded: \(moveFailure)")
+            }
         } catch {
+            let failure = DownloadedFileStore.failureDescription(for: error)
+            let isBackgroundTransport = session.configuration.identifier != nil
+            let transport = !isBackgroundTransport
+                ? "In-app sandbox-compatible session"
+                : "Background URLSession (\(session.configuration.identifier ?? "unknown"))"
+            let diagnostic = "Transport: \(transport)\n\(failure.diagnostic)"
+            let needsSandboxFallback = isBackgroundTransport
+                && DownloadTransport.isSandboxPermissionFailure(failure.userMessage)
+            Self.debugLog("download save failed: \(diagnostic)")
             Task { @MainActor in
+                if needsSandboxFallback {
+                    preferredTransport = .inApp
+                    UserDefaults.standard.set(true, forKey: Self.sandboxTransportPreferenceKey)
+                }
                 update(recordID) {
                     $0.state = .failed
-                    $0.detail = "Couldn't save the downloaded file."
+                    $0.detail = needsSandboxFallback
+                        ? "iOS blocked Musico from reading the background download file. Tap Retry to use sandbox-compatible mode."
+                        : failure.userMessage
+                    $0.diagnostic = diagnostic
                 }
                 finishPostProcessing()
             }
@@ -490,6 +556,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
                 update(recordID) {
                     $0.state = .failed
                     $0.detail = "The downloaded file isn't a playable audio or video container."
+                    $0.diagnostic = "Stage: AVFoundation media validation\nFile: \(destination.path)\nThe completed download could not be opened as a playable media asset."
                 }
                 finishPostProcessing()
                 return
@@ -513,11 +580,22 @@ extension DownloadManager: URLSessionDownloadDelegate {
         guard let recordID = task.taskDescription.flatMap(UUID.init) else { return }
         let nsError = error as NSError
         let cancelled = nsError.code == NSURLErrorCancelled
+        let transport = session.configuration.identifier == nil
+            ? "In-app sandbox-compatible session"
+            : "Background URLSession (\(session.configuration.identifier ?? "unknown"))"
+        let diagnostic = DownloadDiagnostics.report(
+            stage: "URLSession task completion",
+            error: nsError,
+            transport: transport,
+            sourceURL: task.originalRequest?.url,
+            taskIdentifier: task.taskIdentifier
+        )
         Task { @MainActor in
             update(recordID) {
                 guard $0.state.isActive else { return }
                 $0.state = cancelled ? .cancelled : .failed
                 $0.detail = cancelled ? "Cancelled." : error.localizedDescription
+                if !cancelled { $0.diagnostic = diagnostic }
             }
         }
     }
@@ -541,6 +619,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
             update(recordID) {
                 $0.state = .failed
                 $0.detail = "The downloaded file couldn't be registered in the library."
+                $0.diagnostic = "Stage: Library registration\nFile: \(storedName)\nThe LibraryStore reference was unavailable."
             }
             return
         }
@@ -571,6 +650,210 @@ extension DownloadManager: URLSessionDownloadDelegate {
         guard let completion = AppDelegate.shared?.backgroundCompletionHandler else { return }
         AppDelegate.shared?.backgroundCompletionHandler = nil
         completion()
+    }
+}
+
+// MARK: - Downloaded file storage
+
+/// Moves a URLSession temporary download into durable app storage. Some iOS versions
+/// can reject a rename from the background-session staging area even though both URLs
+/// are accessible, so a synchronous filesystem copy is used as a safe fallback before
+/// the delegate returns and iOS removes the temporary file.
+enum DownloadedFileStore {
+    struct SaveResult {
+        var recoveredMoveFailure: String?
+    }
+
+    struct SaveFailure: LocalizedError {
+        let stage: String
+        let errors: [NSError]
+        let source: URL
+        let destination: URL
+
+        var diagnostic: String {
+            let details = errors.enumerated().map { index, error in
+                "Error \(index + 1): \(DownloadDiagnostics.describe(error))"
+            }
+            return ([
+                "Stage: \(stage)",
+                "Source: \(source.path)",
+                "Destination: \(destination.path)"
+            ] + details).joined(separator: "\n")
+        }
+
+        var errorDescription: String? { diagnostic }
+    }
+
+    static func saveTemporaryFile(
+        at source: URL,
+        to destination: URL,
+        fileManager: FileManager = .default,
+        moveItem: ((URL, URL) throws -> Void)? = nil
+    ) throws -> SaveResult {
+        do {
+            try fileManager.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            throw SaveFailure(
+                stage: "Create media directory",
+                errors: [error as NSError],
+                source: source,
+                destination: destination
+            )
+        }
+
+        do {
+            if let moveItem {
+                try moveItem(source, destination)
+            } else {
+                try fileManager.moveItem(at: source, to: destination)
+            }
+            return SaveResult(recoveredMoveFailure: nil)
+        } catch {
+            let moveError = error as NSError
+            do {
+                try fileManager.copyItem(at: source, to: destination)
+                try? fileManager.removeItem(at: source)
+                return SaveResult(
+                    recoveredMoveFailure: "\(moveError.domain) \(moveError.code): \(moveError.localizedDescription)"
+                )
+            } catch {
+                let copyError = error as NSError
+                // `copyItem` can leave a partial destination behind on failure. This
+                // destination is UUID-named and belongs only to this callback.
+                try? fileManager.removeItem(at: destination)
+                throw SaveFailure(
+                    stage: "Move and copy downloaded file",
+                    errors: [moveError, copyError],
+                    source: source,
+                    destination: destination
+                )
+            }
+        }
+    }
+
+    static func failureDescription(for error: Error) -> (userMessage: String, diagnostic: String) {
+        let failure = error as? SaveFailure
+        let errors = failure?.errors ?? [error as NSError]
+        let diagnostic = failure?.diagnostic
+            ?? "Save downloaded file: \((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription)"
+
+        if errors.contains(where: isOutOfSpace) {
+            return (
+                "Couldn't save the downloaded file because this iPhone is out of storage. Free some space, then retry.",
+                diagnostic
+            )
+        }
+        if errors.contains(where: isPermissionFailure) {
+            let primary = errors.last ?? (error as NSError)
+            return (
+                "Couldn't save the downloaded file because iOS denied access to Musico's storage (\(primary.domain) \(primary.code)). Retry to use sandbox-compatible mode.",
+                diagnostic
+            )
+        }
+        if errors.contains(where: isMissingFile) {
+            return (
+                "Couldn't save the downloaded file because iOS removed its temporary copy before Musico could preserve it. Please retry.",
+                diagnostic
+            )
+        }
+
+        let primary = errors.last ?? (error as NSError)
+        return (
+            "Couldn't save the downloaded file. iOS reported: \(primary.localizedDescription) (\(primary.domain) \(primary.code)).",
+            diagnostic
+        )
+    }
+
+    private static func isOutOfSpace(_ error: NSError) -> Bool {
+        (error.domain == NSCocoaErrorDomain
+            && error.code == CocoaError.Code.fileWriteOutOfSpace.rawValue)
+            || (error.domain == NSPOSIXErrorDomain && error.code == 28)
+    }
+
+    private static func isPermissionFailure(_ error: NSError) -> Bool {
+        let cocoaCodes = [
+            CocoaError.Code.fileReadNoPermission.rawValue,
+            CocoaError.Code.fileWriteNoPermission.rawValue
+        ]
+        return (error.domain == NSCocoaErrorDomain && cocoaCodes.contains(error.code))
+            || (error.domain == NSPOSIXErrorDomain && [1, 13].contains(error.code))
+    }
+
+    private static func isMissingFile(_ error: NSError) -> Bool {
+        (error.domain == NSCocoaErrorDomain
+            && error.code == CocoaError.Code.fileReadNoSuchFile.rawValue)
+            || (error.domain == NSPOSIXErrorDomain && error.code == 2)
+    }
+}
+
+enum DownloadTransport: Equatable {
+    case background
+    case inApp
+
+    static let keepOpenMarker = "Keep Musico open"
+    private static let legacyPermissionMarker = "iOS denied access to Musico's storage"
+    private static let sandboxFallbackMarker = "sandbox-compatible mode"
+
+    static func retryTransport(after detail: String?) -> DownloadTransport {
+        guard let detail else { return .background }
+        return isSandboxPermissionFailure(detail)
+            ? .inApp
+            : .background
+    }
+
+    static func preferredTransport(
+        savedPreference: Bool,
+        records: [DownloadRecord]
+    ) -> DownloadTransport {
+        if savedPreference || records.contains(where: { retryTransport(after: $0.detail) == .inApp }) {
+            return .inApp
+        }
+        return .background
+    }
+
+    static func isSandboxPermissionFailure(_ detail: String) -> Bool {
+        detail.contains(legacyPermissionMarker) || detail.contains(sandboxFallbackMarker)
+    }
+
+    func progressDetail(for kind: MediaKind) -> String {
+        switch self {
+        case .background:
+            return "Downloading \(kind.label.lowercased())…"
+        case .inApp:
+            return "\(Self.keepOpenMarker) while the sandbox-compatible download finishes."
+        }
+    }
+}
+
+enum DownloadDiagnostics {
+    static func report(
+        stage: String,
+        error: NSError,
+        transport: String,
+        sourceURL: URL?,
+        taskIdentifier: Int
+    ) -> String {
+        [
+            "Stage: \(stage)",
+            "Transport: \(transport)",
+            "Task identifier: \(taskIdentifier)",
+            "Source URL: \(sourceURL?.absoluteString ?? "Unavailable")",
+            "Error: \(describe(error))"
+        ].joined(separator: "\n")
+    }
+
+    static func describe(_ error: NSError) -> String {
+        var result = "\(error.domain) \(error.code): \(error.localizedDescription)"
+        if let path = error.userInfo[NSFilePathErrorKey] as? String {
+            result += " [path: \(path)]"
+        }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+            result += " [underlying: \(describe(underlying))]"
+        }
+        return result
     }
 }
 

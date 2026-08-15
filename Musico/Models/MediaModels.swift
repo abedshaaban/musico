@@ -95,6 +95,9 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
     var progress: Double
     let createdAt: Date
     var detail: String?
+    /// Persisted technical context for the failure-details sheet. Kept separate from
+    /// `detail` so the Downloads list can remain short and readable.
+    var diagnostic: String?
 
     // Direct, authorized media URL and the media type resolved during validation.
     var remoteURL: URL?
@@ -111,6 +114,7 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
         progress: Double = 0,
         createdAt: Date = Date(),
         detail: String? = nil,
+        diagnostic: String? = nil,
         remoteURL: URL? = nil,
         mediaKind: MediaKind? = nil,
         receivedBytes: Int64 = 0,
@@ -124,6 +128,7 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
         self.progress = progress
         self.createdAt = createdAt
         self.detail = detail
+        self.diagnostic = diagnostic
         self.remoteURL = remoteURL
         self.mediaKind = mediaKind
         self.receivedBytes = receivedBytes
@@ -194,13 +199,17 @@ enum AppPaths {
     @discardableResult
     static func ensureDirectories() -> Bool {
         do {
-            try FileManager.default.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: artwork, withIntermediateDirectories: true)
+            try createDirectories()
             return true
         } catch {
             return false
         }
+    }
+
+    static func createDirectories() throws {
+        try FileManager.default.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artwork, withIntermediateDirectories: true)
     }
 }
 
