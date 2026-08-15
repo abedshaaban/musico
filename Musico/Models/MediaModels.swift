@@ -90,6 +90,7 @@ enum DownloadState: String, Codable, CaseIterable {
 struct DownloadRecord: Identifiable, Codable, Hashable {
     let id: UUID
     var title: String
+    var artist: String?
     var sourceName: String
     var state: DownloadState
     var progress: Double
@@ -109,6 +110,7 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
     init(
         id: UUID = UUID(),
         title: String,
+        artist: String? = nil,
         sourceName: String,
         state: DownloadState,
         progress: Double = 0,
@@ -123,6 +125,7 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
     ) {
         self.id = id
         self.title = title
+        self.artist = artist
         self.sourceName = sourceName
         self.state = state
         self.progress = progress

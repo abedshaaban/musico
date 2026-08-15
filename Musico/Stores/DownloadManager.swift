@@ -144,6 +144,7 @@ final class DownloadManager: NSObject, ObservableObject {
             let resolved = try await YouTubeResolver.resolve(videoID: videoID)
             update(record.id) {
                 $0.title = resolved.title
+                $0.artist = resolved.artist
                 $0.mediaKind = resolved.kind
                 $0.totalBytes = resolved.expectedBytes
                 $0.thumbnailURL = resolved.thumbnailURL
@@ -626,6 +627,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
         await library.adoptDownloadedFile(
             storedFilename: storedName,
             title: title,
+            artist: record?.artist,
             kind: kind,
             originalFilename: originalName,
             thumbnailURL: record?.thumbnailURL

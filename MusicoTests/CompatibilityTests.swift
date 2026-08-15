@@ -63,6 +63,45 @@ final class CompatibilityTests: XCTestCase {
     }
 
     @MainActor
+    func testYouTubeArtistIsReadFromDescriptionStreamLine() {
+        let description = """
+        • Stream tame impala - loser (lyrics)
+
+        • Check out our Lo-Fi Friends
+        """
+
+        XCTAssertEqual(
+            YouTubeResolver.inferredArtist(
+                title: "tame impala - loser (lyrics)",
+                description: description
+            ),
+            "tame impala"
+        )
+    }
+
+    @MainActor
+    func testYouTubeExplicitDescriptionArtistTakesPriority() {
+        XCTAssertEqual(
+            YouTubeResolver.inferredArtist(
+                title: "Uploader - Ambiguous title",
+                description: "Artist: The Smile\nListen now"
+            ),
+            "The Smile"
+        )
+    }
+
+    @MainActor
+    func testYouTubeArtistFallsBackToTitlePattern() {
+        XCTAssertEqual(
+            YouTubeResolver.inferredArtist(
+                title: "Massive Attack – Teardrop (Official Video)",
+                description: "Follow us - Spotify\nOfficial music video"
+            ),
+            "Massive Attack"
+        )
+    }
+
+    @MainActor
     func testBackgroundSessionIdentifierTracksInstalledBundleIdentifier() {
         XCTAssertEqual(
             DownloadManager.sessionIdentifier,
@@ -228,6 +267,7 @@ final class CompatibilityTests: XCTestCase {
 
         XCTAssertEqual(record.state, .failed)
         XCTAssertNil(record.diagnostic)
+        XCTAssertNil(record.artist)
     }
 
     func testDownloadDiagnosticsIncludesUnderlyingErrorAndPath() {

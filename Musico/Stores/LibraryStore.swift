@@ -185,6 +185,7 @@ final class LibraryStore: ObservableObject {
     func adoptDownloadedFile(
         storedFilename: String,
         title: String,
+        artist: String? = nil,
         kind: MediaKind,
         originalFilename: String,
         thumbnailURL: URL? = nil
@@ -196,10 +197,13 @@ final class LibraryStore: ObservableObject {
             artworkFilename = try? MediaMetadataExtractor.saveArtwork(artworkData, to: AppPaths.artwork)
         }
 
+        let inferredArtist = artist?.trimmingCharacters(in: .whitespacesAndNewlines)
         let item = LibraryItem(
             id: UUID(),
             title: metadata.title?.isEmpty == false ? metadata.title! : (title.isEmpty ? "Untitled" : title),
-            artist: metadata.artist?.isEmpty == false ? metadata.artist! : "Unknown Artist",
+            artist: metadata.artist?.isEmpty == false
+                ? metadata.artist!
+                : (inferredArtist?.isEmpty == false ? inferredArtist! : "Unknown Artist"),
             kind: kind,
             localFilename: storedFilename,
             originalFilename: originalFilename,
