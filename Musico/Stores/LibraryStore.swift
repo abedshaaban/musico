@@ -186,6 +186,7 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Register a file the DownloadManager has already moved into the media directory.
+    @discardableResult
     func adoptDownloadedFile(
         storedFilename: String,
         title: String,
@@ -193,7 +194,7 @@ final class LibraryStore: ObservableObject {
         kind: MediaKind,
         originalFilename: String,
         thumbnailURL: URL? = nil
-    ) async {
+    ) async -> UUID {
         let mediaURL = AppPaths.media.appendingPathComponent(storedFilename)
         let metadata = await MediaMetadataExtractor.extract(from: mediaURL)
         var artworkFilename: String?
@@ -233,6 +234,7 @@ final class LibraryStore: ObservableObject {
                 save()
             }
         }
+        return item.id
     }
 
     static func downloadedTitle(confirmed: String, embedded: String?) -> String {
@@ -346,6 +348,38 @@ final class LibraryStore: ObservableObject {
         save()
     }
 
+    /// Returns a stable destination for a bulk import, reusing a playlist with the
+    /// same name so repeated imports don't create visually identical playlists.
+    @discardableResult
+    func ensurePlaylist(named name: String) -> UUID? {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        if let existing = playlists.first(where: {
+            $0.name.caseInsensitiveCompare(cleaned) == .orderedSame
+        }) {
+            return existing.id
+        }
+        let playlist = Playlist(id: UUID(), name: cleaned, itemIDs: [], createdAt: Date())
+        playlists.append(playlist)
+        save()
+        return playlist.id
+    }
+
+    func add(itemID: UUID, toPlaylistID playlistID: UUID, at position: Int? = nil) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistID }),
+              items.contains(where: { $0.id == itemID }),
+              !playlists[index].itemIDs.contains(itemID) else { return }
+        if let position {
+            playlists[index].itemIDs.insert(
+                itemID,
+                at: min(max(position, 0), playlists[index].itemIDs.count)
+            )
+        } else {
+            playlists[index].itemIDs.append(itemID)
+        }
+        save()
+    }
+
     func deletePlaylist(_ playlist: Playlist) {
         playlists.removeAll { $0.id == playlist.id }
         save()
@@ -366,6 +400,10 @@ final class LibraryStore: ObservableObject {
 
     func items(in playlist: Playlist) -> [LibraryItem] {
         playlist.itemIDs.compactMap { id in items.first(where: { $0.id == id }) }
+    }
+
+    func itemCount(inPlaylistID playlistID: UUID) -> Int {
+        playlists.first(where: { $0.id == playlistID })?.itemIDs.count ?? 0
     }
 
     func backupSnapshot() -> PersistedLibrary {

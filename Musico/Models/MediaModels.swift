@@ -126,6 +126,11 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
     var receivedBytes: Int64
     var totalBytes: Int64
     var thumbnailURL: URL?
+    /// When set, the completed library item is also added to this local playlist.
+    /// Persisting this on the record preserves bulk-import intent across retries and
+    /// background-session relaunches.
+    var targetPlaylistID: UUID?
+    var targetPlaylistPosition: Int?
 
     init(
         id: UUID = UUID(),
@@ -141,7 +146,9 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
         mediaKind: MediaKind? = nil,
         receivedBytes: Int64 = 0,
         totalBytes: Int64 = 0,
-        thumbnailURL: URL? = nil
+        thumbnailURL: URL? = nil,
+        targetPlaylistID: UUID? = nil,
+        targetPlaylistPosition: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -157,6 +164,54 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
         self.receivedBytes = receivedBytes
         self.totalBytes = totalBytes
         self.thumbnailURL = thumbnailURL
+        self.targetPlaylistID = targetPlaylistID
+        self.targetPlaylistPosition = targetPlaylistPosition
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, artist, sourceName, state, progress, createdAt, detail, diagnostic
+        case remoteURL, mediaKind, receivedBytes, totalBytes, thumbnailURL
+        case targetPlaylistID, targetPlaylistPosition
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        artist = try container.decodeIfPresent(String.self, forKey: .artist)
+        sourceName = try container.decode(String.self, forKey: .sourceName)
+        state = try container.decode(DownloadState.self, forKey: .state)
+        progress = try container.decodeIfPresent(Double.self, forKey: .progress) ?? 0
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        diagnostic = try container.decodeIfPresent(String.self, forKey: .diagnostic)
+        remoteURL = try container.decodeIfPresent(URL.self, forKey: .remoteURL)
+        mediaKind = try container.decodeIfPresent(MediaKind.self, forKey: .mediaKind)
+        receivedBytes = try container.decodeIfPresent(Int64.self, forKey: .receivedBytes) ?? 0
+        totalBytes = try container.decodeIfPresent(Int64.self, forKey: .totalBytes) ?? 0
+        thumbnailURL = try container.decodeIfPresent(URL.self, forKey: .thumbnailURL)
+        targetPlaylistID = try container.decodeIfPresent(UUID.self, forKey: .targetPlaylistID)
+        targetPlaylistPosition = try container.decodeIfPresent(Int.self, forKey: .targetPlaylistPosition)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(artist, forKey: .artist)
+        try container.encode(sourceName, forKey: .sourceName)
+        try container.encode(state, forKey: .state)
+        try container.encode(progress, forKey: .progress)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(detail, forKey: .detail)
+        try container.encodeIfPresent(diagnostic, forKey: .diagnostic)
+        try container.encodeIfPresent(remoteURL, forKey: .remoteURL)
+        try container.encodeIfPresent(mediaKind, forKey: .mediaKind)
+        try container.encode(receivedBytes, forKey: .receivedBytes)
+        try container.encode(totalBytes, forKey: .totalBytes)
+        try container.encodeIfPresent(thumbnailURL, forKey: .thumbnailURL)
+        try container.encodeIfPresent(targetPlaylistID, forKey: .targetPlaylistID)
+        try container.encodeIfPresent(targetPlaylistPosition, forKey: .targetPlaylistPosition)
     }
 }
 

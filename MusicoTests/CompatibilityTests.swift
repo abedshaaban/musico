@@ -63,6 +63,138 @@ final class CompatibilityTests: XCTestCase {
     }
 
     @MainActor
+    func testYouTubePlaylistIDParsingFromPlaylistAndWatchLinks() {
+        XCTAssertEqual(
+            YouTubeResolver.playlistID(
+                from: URL(string: "https://www.youtube.com/playlist?list=PL1234567890abc")!
+            ),
+            "PL1234567890abc"
+        )
+        XCTAssertEqual(
+            YouTubeResolver.playlistID(
+                from: URL(string: "https://www.youtube.com/watch?v=aqz-KE-bpKQ&list=PL1234567890abc")!
+            ),
+            "PL1234567890abc"
+        )
+        XCTAssertNil(
+            YouTubeResolver.playlistID(
+                from: URL(string: "https://example.com/playlist?list=PL1234567890abc")!
+            )
+        )
+    }
+
+    @MainActor
+    func testYouTubePlaylistPageParsesEditableMetadataAndContinuation() throws {
+        let html = #"""
+        <script>
+        var ytInitialData = {
+          "metadata":{"playlistMetadataRenderer":{"title":"Night Mix"}},
+          "contents":{
+            "playlistVideoRenderer":{
+              "videoId":"aqz-KE-bpKQ",
+              "title":{"runs":[{"text":"Massive Attack – Teardrop"}]},
+              "thumbnail":{"thumbnails":[
+                {"url":"https://example.com/small.jpg","width":120},
+                {"url":"https://example.com/large.jpg","width":640}
+              ]}
+            },
+            "continuationItemRenderer":{
+              "continuationEndpoint":{"continuationCommand":{"token":"NEXT_PAGE"}}
+            }
+          }
+        };
+        ytcfg.set({"INNERTUBE_API_KEY":"test-key","INNERTUBE_CLIENT_VERSION":"2.test"});
+        </script>
+        """#
+
+        let page = try YouTubeResolver.playlistPage(
+            fromHTML: html,
+            playlistID: "PL1234567890abc"
+        )
+
+        XCTAssertEqual(page.title, "Night Mix")
+        XCTAssertEqual(page.items.count, 1)
+        XCTAssertEqual(page.items.first?.videoID, "aqz-KE-bpKQ")
+        XCTAssertEqual(page.items.first?.artist, "Massive Attack")
+        XCTAssertEqual(page.items.first?.thumbnailURL?.absoluteString, "https://example.com/large.jpg")
+        XCTAssertEqual(page.continuation, "NEXT_PAGE")
+        XCTAssertEqual(page.apiKey, "test-key")
+        XCTAssertEqual(page.clientVersion, "2.test")
+    }
+
+    @MainActor
+    func testYouTubePlaylistPageParsesCurrentLockupViewModel() throws {
+        let html = #"""
+        <script>
+        var ytInitialData = {
+          "metadata":{"playlistMetadataRenderer":{"title":"Live Songs"}},
+          "contents":{"lockupViewModel":{
+            "contentId":"PXC_PYeB6F8",
+            "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+            "contentImage":{"thumbnailViewModel":{"image":{"sources":[
+              {"url":"https://example.com/168.jpg","width":168},
+              {"url":"https://example.com/336.jpg","width":336}
+            ]}}},
+            "metadata":{"lockupMetadataViewModel":{
+              "title":{"content":"Rick Astley - Angels On My Side"}
+            }}
+          }}
+        };
+        ytcfg.set({"INNERTUBE_API_KEY":"test-key","INNERTUBE_CLIENT_VERSION":"2.test"});
+        </script>
+        """#
+
+        let page = try YouTubeResolver.playlistPage(
+            fromHTML: html,
+            playlistID: "PL1234567890abc"
+        )
+
+        XCTAssertEqual(page.items.first?.videoID, "PXC_PYeB6F8")
+        XCTAssertEqual(page.items.first?.title, "Rick Astley - Angels On My Side")
+        XCTAssertEqual(page.items.first?.artist, "Rick Astley")
+        XCTAssertEqual(page.items.first?.thumbnailURL?.absoluteString, "https://example.com/336.jpg")
+    }
+
+    func testLegacyDownloadRecordsDecodeWithoutBulkImportFields() throws {
+        let id = UUID()
+        let json = """
+        {
+          "id":"\(id.uuidString)",
+          "title":"Teardrop",
+          "sourceName":"YouTube",
+          "state":"completed",
+          "progress":1,
+          "createdAt":0,
+          "receivedBytes":100,
+          "totalBytes":100
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let record = try decoder.decode(DownloadRecord.self, from: Data(json.utf8))
+
+        XCTAssertNil(record.targetPlaylistID)
+        XCTAssertNil(record.targetPlaylistPosition)
+    }
+
+    func testBulkImportFieldsSurviveDownloadRecordRoundTrip() throws {
+        let playlistID = UUID()
+        let record = DownloadRecord(
+            title: "Teardrop",
+            sourceName: "YouTube",
+            state: .queued,
+            targetPlaylistID: playlistID,
+            targetPlaylistPosition: 4
+        )
+
+        let data = try JSONEncoder.musico.encode(record)
+        let restored = try JSONDecoder.musico.decode(DownloadRecord.self, from: data)
+
+        XCTAssertEqual(restored.targetPlaylistID, playlistID)
+        XCTAssertEqual(restored.targetPlaylistPosition, 4)
+    }
+
+    @MainActor
     func testYouTubeArtistIsReadFromDescriptionStreamLine() {
         let description = """
         • Stream tame impala - loser (lyrics)

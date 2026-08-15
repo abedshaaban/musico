@@ -13,6 +13,22 @@ struct PreparedDownload: Identifiable {
     let thumbnailURL: URL?
 }
 
+struct YouTubePlaylistDownloadRequest: Identifiable {
+    var id: String { videoID }
+    let videoID: String
+    let title: String
+    let artist: String
+    let thumbnailURL: URL?
+
+    var sourceURL: URL {
+        URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
 private struct DownloadPreparationError: LocalizedError {
     let failureTitle: String
     let message: String
@@ -36,6 +52,7 @@ final class DownloadManager: NSObject, ObservableObject {
     private var preferredTransport: DownloadTransport = .background
     private static let sandboxTransportPreferenceKey = "Musico.prefersSandboxCompatibleDownloads"
     private static let youtubeInAppPreferenceKey = "Musico.prefersInAppYouTubeDownloads"
+    private static let maximumConcurrentDownloads = 3
 
     static var sessionIdentifier: String {
         (Bundle.main.bundleIdentifier ?? "com.abedshaaban.Musico") + ".downloads"
@@ -93,7 +110,9 @@ final class DownloadManager: NSObject, ObservableObject {
             rawInput,
             transport: preferredTransport,
             confirmedTitle: nil,
-            confirmedArtist: nil
+            confirmedArtist: nil,
+            targetPlaylistID: nil,
+            targetPlaylistPosition: nil
         )
     }
 
@@ -101,7 +120,9 @@ final class DownloadManager: NSObject, ObservableObject {
         _ rawInput: String,
         transport: DownloadTransport,
         confirmedTitle: String?,
-        confirmedArtist: String?
+        confirmedArtist: String?,
+        targetPlaylistID: UUID?,
+        targetPlaylistPosition: Int?
     ) async {
         do {
             let prepared = try await prepareFromURL(rawInput)
@@ -109,7 +130,9 @@ final class DownloadManager: NSObject, ObservableObject {
                 prepared,
                 title: confirmedTitle ?? prepared.title,
                 artist: confirmedArtist ?? prepared.artist ?? "",
-                transport: transport
+                transport: transport,
+                targetPlaylistID: targetPlaylistID,
+                targetPlaylistPosition: targetPlaylistPosition
             )
         } catch let error as DownloadPreparationError {
             insertFailed(title: error.failureTitle, detail: error.message)
@@ -194,15 +217,48 @@ final class DownloadManager: NSObject, ObservableObject {
             prepared,
             title: title,
             artist: artist,
-            transport: transport
+            transport: transport,
+            targetPlaylistID: nil,
+            targetPlaylistPosition: nil
         )
+    }
+
+    /// Creates durable queued records immediately, then resolves at most a small number
+    /// of expiring YouTube stream URLs at a time. Completed songs are adopted by the
+    /// library and inserted into the matching local playlist in source order.
+    func enqueueYouTubePlaylist(
+        _ requests: [YouTubePlaylistDownloadRequest],
+        playlistName: String
+    ) {
+        guard !requests.isEmpty, let library,
+              let playlistID = library.ensurePlaylist(named: playlistName) else { return }
+        let startingPosition = library.itemCount(inPlaylistID: playlistID)
+        let newRecords = requests.enumerated().map { offset, request in
+            DownloadRecord(
+                title: request.title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                    ?? "YouTube Video",
+                artist: request.artist.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                sourceName: "YouTube",
+                state: .queued,
+                detail: "Waiting to prepare…",
+                remoteURL: request.sourceURL,
+                thumbnailURL: request.thumbnailURL,
+                targetPlaylistID: playlistID,
+                targetPlaylistPosition: startingPosition + offset
+            )
+        }
+        records.insert(contentsOf: newRecords, at: 0)
+        persist()
+        pumpQueuedDownloads()
     }
 
     private func startPreparedDownload(
         _ prepared: PreparedDownload,
         title: String,
         artist: String,
-        transport: DownloadTransport
+        transport: DownloadTransport,
+        targetPlaylistID: UUID?,
+        targetPlaylistPosition: Int?
     ) {
         let cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -215,7 +271,9 @@ final class DownloadManager: NSObject, ObservableObject {
             remoteURL: prepared.sourceURL,
             mediaKind: prepared.kind,
             totalBytes: prepared.expectedBytes,
-            thumbnailURL: prepared.thumbnailURL
+            thumbnailURL: prepared.thumbnailURL,
+            targetPlaylistID: targetPlaylistID,
+            targetPlaylistPosition: targetPlaylistPosition
         )
         records.insert(record, at: 0)
         persist()
@@ -230,6 +288,7 @@ final class DownloadManager: NSObject, ObservableObject {
                 $0.detail = "Cancelled."
             }
         }
+        pumpQueuedDownloads()
     }
 
     func retry(_ record: DownloadRecord) {
@@ -243,13 +302,17 @@ final class DownloadManager: NSObject, ObservableObject {
         }
         let confirmedTitle = record.title
         let confirmedArtist = record.artist
+        let targetPlaylistID = record.targetPlaylistID
+        let targetPlaylistPosition = record.targetPlaylistPosition
         remove(record)
         Task {
             await addFromURL(
                 raw,
                 transport: transport,
                 confirmedTitle: confirmedTitle,
-                confirmedArtist: confirmedArtist
+                confirmedArtist: confirmedArtist,
+                targetPlaylistID: targetPlaylistID,
+                targetPlaylistPosition: targetPlaylistPosition
             )
         }
     }
@@ -264,6 +327,7 @@ final class DownloadManager: NSObject, ObservableObject {
         findTask(for: record.id) { $0?.cancel() }
         records.removeAll { $0.id == record.id }
         persist()
+        pumpQueuedDownloads()
     }
 
     func clearFinished() {
@@ -368,6 +432,75 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
 
+    // MARK: - Bulk queue
+
+    private func pumpQueuedDownloads() {
+        var occupiedSlots = records.filter {
+            $0.state == .validating || $0.state == .downloading
+        }.count
+        var startedIDs: [UUID] = []
+
+        while occupiedSlots < Self.maximumConcurrentDownloads,
+              let index = records.firstIndex(where: { $0.state == .queued }) {
+            records[index].state = .validating
+            records[index].detail = "Preparing YouTube download…"
+            startedIDs.append(records[index].id)
+            occupiedSlots += 1
+        }
+        guard !startedIDs.isEmpty else { return }
+        persist()
+        for recordID in startedIDs {
+            // If a background download completion opened the app briefly, keep its
+            // completion handler alive until replacement tasks have been resolved and
+            // handed back to URLSession.
+            postProcessingGate.begin()
+            Task { [weak self] in
+                guard let self else { return }
+                await self.prepareQueuedDownload(recordID)
+                self.finishPostProcessing()
+            }
+        }
+    }
+
+    private func prepareQueuedDownload(_ recordID: UUID) async {
+        guard let record = records.first(where: { $0.id == recordID }),
+              record.state == .validating,
+              let sourceURL = record.remoteURL else {
+            pumpQueuedDownloads()
+            return
+        }
+
+        do {
+            let prepared = try await prepareFromURL(sourceURL.absoluteString)
+            guard let current = records.first(where: { $0.id == recordID }),
+                  current.state == .validating else {
+                pumpQueuedDownloads()
+                return
+            }
+            let transport: DownloadTransport = prepared.sourceName == "YouTube"
+                && UserDefaults.standard.bool(forKey: Self.youtubeInAppPreferenceKey)
+                ? .inApp
+                : preferredTransport
+            update(recordID) {
+                $0.sourceName = prepared.sourceName
+                $0.state = .downloading
+                $0.detail = transport.progressDetail(for: prepared.kind)
+                $0.mediaKind = prepared.kind
+                $0.totalBytes = prepared.expectedBytes
+                $0.thumbnailURL = $0.thumbnailURL ?? prepared.thumbnailURL
+            }
+            startTask(for: recordID, url: prepared.downloadURL, transport: transport)
+        } catch {
+            update(recordID) {
+                $0.state = .failed
+                $0.detail = error.localizedDescription
+                $0.diagnostic = "Stage: Prepare queued YouTube download\nSource URL: \(sourceURL.absoluteString)\nError: \(error.localizedDescription)"
+            }
+            pumpQueuedDownloads()
+        }
+    }
+
+
     // MARK: - Downloading
 
     private func startTask(
@@ -460,7 +593,9 @@ final class DownloadManager: NSObject, ObservableObject {
     /// Background URLSession tasks survive system termination. Reconcile persisted UI
     /// state with the recreated session before deciding that an active record is stale.
     private func reconcilePersistedRecordsWithBackgroundTasks() {
-        let persistedActiveIDs = Set(records.filter(\.state.isActive).map(\.id))
+        let persistedDownloadingIDs = Set(
+            records.filter { $0.state == .downloading }.map(\.id)
+        )
         session.getAllTasks { [weak self] tasks in
             let activeIDs = Set(tasks.compactMap { task in
                 task.taskDescription.flatMap(UUID.init)
@@ -468,8 +603,14 @@ final class DownloadManager: NSObject, ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 var changed = false
+                for index in records.indices where records[index].state == .validating {
+                    records[index].state = .queued
+                    records[index].detail = "Waiting to prepare…"
+                    changed = true
+                }
                 for index in records.indices
-                where persistedActiveIDs.contains(records[index].id) && records[index].state.isActive {
+                where persistedDownloadingIDs.contains(records[index].id)
+                    && records[index].state == .downloading {
                     if activeIDs.contains(records[index].id) {
                         if records[index].state != .downloading {
                             records[index].state = .downloading
@@ -483,6 +624,7 @@ final class DownloadManager: NSObject, ObservableObject {
                     }
                 }
                 if changed { persist() }
+                pumpQueuedDownloads()
             }
         }
     }
@@ -625,6 +767,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
                         : failure.userMessage
                     $0.diagnostic = diagnostic
                 }
+                pumpQueuedDownloads()
                 finishPostProcessing()
             }
             return
@@ -642,6 +785,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
                     $0.detail = "The downloaded file isn't a playable audio or video container."
                     $0.diagnostic = "Stage: AVFoundation media validation\nFile: \(destination.path)\nThe completed download could not be opened as a playable media asset."
                 }
+                pumpQueuedDownloads()
                 finishPostProcessing()
                 return
             }
@@ -685,6 +829,8 @@ extension DownloadManager: URLSessionDownloadDelegate {
             ), let sourceURL = record.remoteURL {
                 let confirmedTitle = record.title
                 let confirmedArtist = record.artist
+                let targetPlaylistID = record.targetPlaylistID
+                let targetPlaylistPosition = record.targetPlaylistPosition
                 UserDefaults.standard.set(true, forKey: Self.youtubeInAppPreferenceKey)
                 records.removeAll { $0.id == recordID }
                 persist()
@@ -692,8 +838,11 @@ extension DownloadManager: URLSessionDownloadDelegate {
                     sourceURL.absoluteString,
                     transport: .inApp,
                     confirmedTitle: confirmedTitle,
-                    confirmedArtist: confirmedArtist
+                    confirmedArtist: confirmedArtist,
+                    targetPlaylistID: targetPlaylistID,
+                    targetPlaylistPosition: targetPlaylistPosition
                 )
+                pumpQueuedDownloads()
                 return
             }
             update(recordID) {
@@ -702,6 +851,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
                 $0.detail = cancelled ? "Cancelled." : error.localizedDescription
                 if !cancelled { $0.diagnostic = diagnostic }
             }
+            pumpQueuedDownloads()
         }
     }
 
@@ -741,7 +891,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
             }
             return
         }
-        await library.adoptDownloadedFile(
+        let itemID = await library.adoptDownloadedFile(
             storedFilename: storedName,
             title: title,
             artist: record?.artist,
@@ -749,12 +899,20 @@ extension DownloadManager: URLSessionDownloadDelegate {
             originalFilename: originalName,
             thumbnailURL: record?.thumbnailURL
         )
+        if let playlistID = record?.targetPlaylistID {
+            library.add(
+                itemID: itemID,
+                toPlaylistID: playlistID,
+                at: record?.targetPlaylistPosition
+            )
+        }
         update(recordID) {
             $0.state = .completed
             $0.progress = 1
             $0.mediaKind = kind
             $0.detail = "Saved to your library."
         }
+        pumpQueuedDownloads()
     }
 
     @MainActor

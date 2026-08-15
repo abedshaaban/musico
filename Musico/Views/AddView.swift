@@ -28,7 +28,7 @@ struct AddView: View {
                 } header: {
                     headerView
                 } footer: {
-                    Text("Paste a direct https:// link to an audio or video file, or a YouTube video link. Musico validates the link and lets you review the title and artist before downloading.")
+                    Text("Paste a direct https:// media link, a YouTube video, or a YouTube playlist. Musico lets you review titles and artists before downloading.")
                 }
 
                 if activeCount > 0 {
@@ -76,6 +76,7 @@ struct AddByURLSheet: View {
     @State private var urlText = ""
     @State private var isSubmitting = false
     @State private var preparedDownload: PreparedDownload?
+    @State private var preparedPlaylist: YouTubePlaylistPreview?
     @State private var errorMessage = ""
     @State private var isShowingError = false
 
@@ -104,7 +105,7 @@ struct AddByURLSheet: View {
                     }
                     .disabled(!clipboardHasText)
                 } footer: {
-                    Text("Direct file links (for example .mp3, .m4a, .mp4, or .mov) and YouTube video links are supported. The link must use https.")
+                    Text("Direct file links, YouTube videos, and YouTube playlists are supported. The link must use https.")
                 }
             }
             .musicoThemedListBackground()
@@ -129,6 +130,13 @@ struct AddByURLSheet: View {
             DownloadConfirmationSheet(prepared: prepared) { title, artist in
                 downloads.startPreparedDownload(prepared, title: title, artist: artist)
                 preparedDownload = nil
+                dismiss()
+            }
+        }
+        .sheet(item: $preparedPlaylist) { playlist in
+            YouTubePlaylistReviewSheet(playlist: playlist) { name, requests in
+                downloads.enqueueYouTubePlaylist(requests, playlistName: name)
+                preparedPlaylist = nil
                 dismiss()
             }
         }
@@ -161,7 +169,11 @@ struct AddByURLSheet: View {
         isSubmitting = true
         Task {
             do {
-                preparedDownload = try await downloads.prepareFromURL(input)
+                if let url = URL(string: input), YouTubeResolver.playlistID(from: url) != nil {
+                    preparedPlaylist = try await YouTubeResolver.resolvePlaylist(from: url)
+                } else {
+                    preparedDownload = try await downloads.prepareFromURL(input)
+                }
             } catch {
                 errorMessage = error.localizedDescription
                 isShowingError = true
@@ -172,6 +184,357 @@ struct AddByURLSheet: View {
 
     private func dismiss() {
         presentationMode.wrappedValue.dismiss()
+    }
+}
+
+private struct PlaylistDraftItem: Identifiable {
+    var id: String { videoID }
+    let videoID: String
+    let thumbnailURL: URL?
+    var title: String
+    var artist: String
+    var isSelected: Bool
+}
+
+private struct YouTubePlaylistReviewSheet: View {
+    @Environment(\.presentationMode) private var presentationMode
+    let onConfirm: (String, [YouTubePlaylistDownloadRequest]) -> Void
+
+    @State private var playlistName: String
+    @State private var items: [PlaylistDraftItem]
+    @State private var editingItem: PlaylistDraftItem?
+    @State private var isBulkArtistPresented = false
+
+    init(
+        playlist: YouTubePlaylistPreview,
+        onConfirm: @escaping (String, [YouTubePlaylistDownloadRequest]) -> Void
+    ) {
+        self.onConfirm = onConfirm
+        _playlistName = State(initialValue: playlist.title)
+        _items = State(initialValue: playlist.items.map {
+            PlaylistDraftItem(
+                videoID: $0.videoID,
+                thumbnailURL: $0.thumbnailURL,
+                title: $0.title,
+                artist: $0.artist ?? "",
+                isSelected: true
+            )
+        })
+    }
+
+    private var selectedCount: Int { items.filter(\.isSelected).count }
+    private var allAreSelected: Bool { !items.isEmpty && selectedCount == items.count }
+
+    private var canConfirm: Bool {
+        !playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && selectedCount > 0
+            && items.allSatisfy {
+                !$0.isSelected
+                    || !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Musico Playlist")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextField(musicoPrompt: "Playlist name", text: $playlistName)
+                            .musicoFormTextField()
+                    }
+                    HStack {
+                        Label(
+                            "\(selectedCount) selected",
+                            systemImage: "checkmark.square.fill"
+                        )
+                        .foregroundColor(selectedCount > 0 ? MusicoTheme.magenta : .secondary)
+                        Spacer()
+                        Button(allAreSelected ? "Clear" : "Select All") {
+                            let shouldSelect = !allAreSelected
+                            for index in items.indices {
+                                items[index].isSelected = shouldSelect
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Playlist")
+                } footer: {
+                    Text("Downloads are added to your library and to this playlist as they finish.")
+                }
+
+                Section {
+                    Button {
+                        isBulkArtistPresented = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.2.fill")
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Set Artist for Selected")
+                                    .foregroundColor(.primary)
+                                Text("Apply one artist to \(selectedCount) song\(selectedCount == 1 ? "" : "s")")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .disabled(selectedCount == 0)
+                }
+
+                Section {
+                    ForEach(items) { item in
+                        HStack(spacing: 11) {
+                            Button {
+                                toggleSelection(for: item.id)
+                            } label: {
+                                Image(systemName: item.isSelected ? "checkmark.square.fill" : "square")
+                                    .font(.system(size: 24, weight: .medium))
+                                    .foregroundColor(item.isSelected ? MusicoTheme.magenta : .secondary)
+                                    .frame(width: 30, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(item.isSelected ? "Exclude \(item.title)" : "Include \(item.title)")
+
+                            AsyncImage(url: item.thumbnailURL) { phase in
+                                if let image = phase.image {
+                                    image.resizable().scaledToFill()
+                                } else {
+                                    ZStack {
+                                        Color.secondary.opacity(0.16)
+                                        Image(systemName: "music.note")
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                            .frame(width: 72, height: 46)
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+                            Button {
+                                editingItem = item
+                            } label: {
+                                HStack(spacing: 8) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(item.title)
+                                            .font(.body.weight(.medium))
+                                            .foregroundColor(.primary)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                        Text(item.artist.isEmpty ? "Unknown Artist" : item.artist)
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Image(systemName: "pencil")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 28, height: 28)
+                                        .background(Color.secondary.opacity(0.12))
+                                        .clipShape(Circle())
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 6)
+                        .opacity(item.isSelected ? 1 : 0.48)
+                    }
+                } header: {
+                    HStack {
+                        Text("Songs")
+                        Spacer()
+                        Text("\(selectedCount) of \(items.count)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } footer: {
+                    Text("Use the checkbox to include a song. Tap its details or pencil to edit the title and artist.")
+                }
+            }
+            .musicoThemedListBackground()
+            .navigationTitle("Review Playlist")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Back") { presentationMode.wrappedValue.dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add \(selectedCount)") { confirm() }
+                        .disabled(!canConfirm)
+                }
+            }
+        }
+        .musicoStackNavigationStyle()
+        .sheet(item: $editingItem) { item in
+            PlaylistSongEditSheet(item: item) { updated in
+                guard let index = items.firstIndex(where: { $0.id == updated.id }) else { return }
+                items[index].title = updated.title
+                items[index].artist = updated.artist
+                editingItem = nil
+            }
+        }
+        .sheet(isPresented: $isBulkArtistPresented) {
+            PlaylistBulkArtistSheet(selectedCount: selectedCount) { artist in
+                for index in items.indices where items[index].isSelected {
+                    items[index].artist = artist
+                }
+                isBulkArtistPresented = false
+            }
+        }
+    }
+
+    private func toggleSelection(for itemID: String) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        items[index].isSelected.toggle()
+    }
+
+    private func confirm() {
+        let requests = items.compactMap { item -> YouTubePlaylistDownloadRequest? in
+            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard item.isSelected, !title.isEmpty else { return nil }
+            return YouTubePlaylistDownloadRequest(
+                videoID: item.videoID,
+                title: title,
+                artist: item.artist.trimmingCharacters(in: .whitespacesAndNewlines),
+                thumbnailURL: item.thumbnailURL
+            )
+        }
+        guard !requests.isEmpty else { return }
+        onConfirm(playlistName.trimmingCharacters(in: .whitespacesAndNewlines), requests)
+    }
+}
+
+private struct PlaylistSongEditSheet: View {
+    @Environment(\.presentationMode) private var presentationMode
+    let item: PlaylistDraftItem
+    let onSave: (PlaylistDraftItem) -> Void
+
+    @State private var title: String
+    @State private var artist: String
+
+    init(item: PlaylistDraftItem, onSave: @escaping (PlaylistDraftItem) -> Void) {
+        self.item = item
+        self.onSave = onSave
+        _title = State(initialValue: item.title)
+        _artist = State(initialValue: item.artist)
+    }
+
+    private var canSave: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    HStack(spacing: 12) {
+                        AsyncImage(url: item.thumbnailURL) { phase in
+                            if let image = phase.image {
+                                image.resizable().scaledToFill()
+                            } else {
+                                ZStack {
+                                    Color.secondary.opacity(0.16)
+                                    Image(systemName: "music.note")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .frame(width: 96, height: 58)
+                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+                        Text("Changes apply to this download only.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section("Song Details") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Title")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextField(musicoPrompt: "Song title", text: $title)
+                            .musicoFormTextField()
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Artist")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        ArtistComboField(artist: $artist)
+                    }
+                }
+            }
+            .musicoThemedListBackground()
+            .navigationTitle("Edit Song")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { presentationMode.wrappedValue.dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        var updated = item
+                        updated.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                        updated.artist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onSave(updated)
+                    }
+                    .disabled(!canSave)
+                }
+            }
+        }
+        .musicoStackNavigationStyle()
+    }
+}
+
+private struct PlaylistBulkArtistSheet: View {
+    @Environment(\.presentationMode) private var presentationMode
+    let selectedCount: Int
+    let onApply: (String) -> Void
+    @State private var artist = ""
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    ArtistComboField(artist: $artist)
+                } header: {
+                    Text("Artist")
+                } footer: {
+                    Text("This changes the artist for all \(selectedCount) selected songs.")
+                }
+
+                Section {
+                    Button("Clear Artist on Selected Songs") {
+                        onApply("")
+                    }
+                    .foregroundColor(.red)
+                }
+            }
+            .musicoThemedListBackground()
+            .navigationTitle("Set Artist")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { presentationMode.wrappedValue.dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        onApply(artist.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    .disabled(artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .musicoStackNavigationStyle()
     }
 }
 

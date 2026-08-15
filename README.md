@@ -46,7 +46,7 @@ For lower memory and battery use on older devices, artwork is downsampled and he
 
 ## Tabs
 
-- **Add** — paste a direct `https://` link to a media file (or a YouTube video link). Musico validates the link, then downloads it in the background.
+- **Add** — paste a direct `https://` media link, a YouTube video, or a YouTube playlist. Playlist imports include an editable title/artist preview before anything is queued.
 - **Downloads** — live progress, cancel, retry, and clear for the background download queue.
 - **Library** — import user-provided audio/video through the Files picker, browse all media, and manage playlists.
 - **Now Playing** — play/pause, seek, skip, shuffle; shows video for video items.
@@ -56,8 +56,9 @@ For lower memory and battery use on older devices, artwork is downsampled and he
 1. The URL must use `https` and point straight at an audio or video file, **or** be a YouTube video link.
 2. For direct files, a `HEAD` (with ranged-`GET` fallback) probe validates the link is reachable and its `Content-Type` is a supported audio/video container.
 3. For YouTube links, the internal player API resolves a playable stream, which is then downloaded like a direct file.
+   Playlist links first load metadata for a bulk preview. Selected items are queued with a maximum of three active downloads, and each expiring stream URL is resolved only when its turn starts.
 4. `URLSession` background configuration (`com.abedshaaban.Musico.downloads`) downloads the file even when the app is suspended; `AppDelegate` captures the background-session completion handler.
-5. The completed file is moved into `Application Support/Musico/Media` and registered in the persistent library.
+5. The completed file is moved into `Application Support/Musico/Media` and registered in the persistent library. Bulk imports are also placed into a matching local Musico playlist.
 
 ## Compliance
 
