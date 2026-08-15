@@ -19,6 +19,7 @@
 		A1000000000000000000000A /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* LibraryView.swift */; };
 		A1000000000000000000000B /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* NowPlayingView.swift */; };
 		A1000000000000000000000C /* PlatformViewModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* PlatformViewModifiers.swift */; };
+		A1000000000000000000000D /* YouTubeResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* YouTubeResolver.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		B1000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B1000000000000000000000D /* Musico.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Musico.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1000000000000000000000E /* PlatformViewModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformViewModifiers.swift; sourceTree = "<group>"; };
+		B1000000000000000000000F /* YouTubeResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeResolver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,6 +89,7 @@
 			children = (
 				B10000000000000000000003 /* LibraryStore.swift */,
 				B10000000000000000000004 /* DownloadManager.swift */,
+				B1000000000000000000000F /* YouTubeResolver.swift */,
 			);
 			path = Stores;
 			sourceTree = "<group>";
@@ -198,6 +201,7 @@
 				A1000000000000000000000A /* LibraryView.swift in Sources */,
 				A1000000000000000000000B /* NowPlayingView.swift in Sources */,
 				A1000000000000000000000C /* PlatformViewModifiers.swift in Sources */,
+				A1000000000000000000000D /* YouTubeResolver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

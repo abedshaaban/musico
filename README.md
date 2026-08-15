@@ -13,21 +13,22 @@ The target is iPhone-only, has an iOS 15.0 deployment target, and declares the B
 
 ## Tabs
 
-- **Add** — paste a direct `https://` link to a media file (or use *Paste from Clipboard*). Musico validates reachability and MIME type, then downloads it in the background.
+- **Add** — paste a direct `https://` link to a media file (or a YouTube video link). Musico validates the link, then downloads it in the background.
 - **Downloads** — live progress, cancel, retry, and clear for the background download queue.
 - **Library** — import user-provided audio/video through the Files picker, browse all media, and manage playlists.
 - **Now Playing** — play/pause, seek, skip, shuffle; shows video for video items.
 
 ## Add-by-URL flow
 
-1. The URL must use `https` and point straight at an audio or video file **(direct link, not a watch/player page)**.
-2. A `HEAD` (with ranged-`GET` fallback) probe validates the link is reachable and its `Content-Type` is a supported audio/video container before anything is queued.
-3. `URLSession` background configuration (`com.abedshaaban.Musico.downloads`) downloads the file even when the app is suspended; `AppDelegate` captures the background-session completion handler.
-4. The completed file is moved into `Application Support/Musico/Media` and registered in the persistent library.
+1. The URL must use `https` and point straight at an audio or video file, **or** be a YouTube video link.
+2. For direct files, a `HEAD` (with ranged-`GET` fallback) probe validates the link is reachable and its `Content-Type` is a supported audio/video container.
+3. For YouTube links, the internal player API resolves a playable stream, which is then downloaded like a direct file.
+4. `URLSession` background configuration (`com.abedshaaban.Musico.downloads`) downloads the file even when the app is suspended; `AppDelegate` captures the background-session completion handler.
+5. The completed file is moved into `Application Support/Musico/Media` and registered in the persistent library.
 
 ## Compliance
 
-Musico only fetches URLs the user is authorized to save. Extension points (see `DownloadManager.swift`) allow adding providers for specific services.
+Musico only fetches URLs the user is authorized to save. YouTube links are resolved via YouTube's internal player API; download only content you have the right to save. Extension points (see `DownloadManager.swift`) allow adding providers for other services.
 
 - Add a download provider only when a source's terms and the user's rights allow returning a direct file URL.
 - Audio conversion — define a conversion protocol only after an approved, locally supported (e.g. AVFoundation) implementation is chosen.

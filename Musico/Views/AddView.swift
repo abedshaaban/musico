@@ -28,7 +28,7 @@ struct AddView: View {
                 } header: {
                     headerView
                 } footer: {
-                    Text("Paste a direct https:// link to an audio or video file you're authorized to save. Musico validates the link, then downloads it in the background.")
+                    Text("Paste a direct https:// link to an audio or video file, or a YouTube video link. Musico validates the link, then downloads it in the background.")
                 }
 
                 if activeCount > 0 {
@@ -42,8 +42,8 @@ struct AddView: View {
                 }
 
                 Section("What Musico won't do") {
-                    complianceRow("Never scrapes web pages or resolves stream manifests.")
                     complianceRow("Never bypasses DRM or a service's access controls.")
+                    complianceRow("Only download content you're authorized to save.")
                     complianceRow("Links from protected streaming hosts are refused.")
                 }
             }
@@ -108,7 +108,7 @@ struct AddByURLSheet: View {
                     }
                     .disabled(!clipboardHasText)
                 } footer: {
-                    Text("Direct file links only (for example an .mp3, .m4a, .mp4, or .mov). The link must use https and point straight at the file.")
+                    Text("Direct file links (for example .mp3, .m4a, .mp4, or .mov) and YouTube video links are supported. The link must use https.")
                 }
             }
             .navigationTitle("Add from URL")

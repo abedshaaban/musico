@@ -34,6 +34,7 @@ final class DownloadManager: NSObject, ObservableObject {
     // Hosts that serve protected streams behind manifests / DRM / terms that forbid
     // direct file download. Reachability of a raw media URL on these is not expected;
     // refusing early keeps Musico strictly a personal-file player.
+    // YouTube is excluded here because it has a dedicated resolver.
     private static let blockedHostFragments = [
         "ytimg.", "googlevideo.", "soundcloud.",
         "vimeo.", "tiktok.", "instagram.", "facebook.", "fbcdn.", "dailymotion.",
@@ -64,6 +65,20 @@ final class DownloadManager: NSObject, ObservableObject {
             return
         }
         guard !Self.isBlockedHost(url) else {
+            insertFailed(
+                title: "Unsupported link",
+                detail: "Links from protected streaming services aren't supported. Paste a direct https:// link to an audio or video file you're authorized to save."
+            )
+            return
+        }
+
+        // YouTube URLs are resolved via the internal player API rather than probed as files.
+        if YouTubeResolver.handles(url) {
+            guard let videoID = YouTubeResolver.videoID(from: url) else {
+                insertFailed(title: "Invalid YouTube link", detail: "The link doesn't contain a valid YouTube video ID.")
+                return
+            }
+            await addYouTubeVideo(id: videoID, sourceURL: url)
             return
         }
 
@@ -92,6 +107,35 @@ final class DownloadManager: NSObject, ObservableObject {
                 $0.detail = "Downloading \(resolved.kind.label.lowercased())…"
             }
             startTask(for: record.id, url: url)
+        }
+    }
+
+    private func addYouTubeVideo(id videoID: String, sourceURL: URL) async {
+        let record = DownloadRecord(
+            title: "YouTube Video",
+            sourceName: "YouTube",
+            state: .validating,
+            detail: "Resolving YouTube stream…",
+            remoteURL: sourceURL
+        )
+        records.insert(record, at: 0)
+        persist()
+
+        do {
+            let resolved = try await YouTubeResolver.resolve(videoID: videoID)
+            update(record.id) {
+                $0.title = resolved.title
+                $0.mediaKind = resolved.kind
+                $0.totalBytes = resolved.expectedBytes
+                $0.state = .downloading
+                $0.detail = "Downloading \(resolved.kind.label.lowercased())…"
+            }
+            startTask(for: record.id, url: resolved.url)
+        } catch {
+            update(record.id) {
+                $0.state = .failed
+                $0.detail = error.localizedDescription
+            }
         }
     }
 
@@ -137,58 +181,86 @@ final class DownloadManager: NSObject, ObservableObject {
         case failure(String)
     }
 
+    private enum InspectResult {
+        case resolved(ResolvedMedia)
+        case webPage
+        case unreachable
+    }
+
     private func probe(_ url: URL) async -> ProbeOutcome {
         print("probe: starting for \(url.absoluteString)")
         // Prefer a HEAD request; fall back to a 1-byte ranged GET for servers that
         // reject HEAD but still expose the content type.
-        if let resolved = await inspect(url, method: "HEAD") {
+        switch await inspect(url, method: "HEAD") {
+        case .resolved(let resolved):
             print("probe: HEAD success for \(url.absoluteString)")
             return .success(resolved)
+        case .webPage:
+            print("probe: HEAD returned a web page for \(url.absoluteString)")
+            return .failure(Self.webPageFailureMessage)
+        case .unreachable:
+            break
         }
         print("probe: HEAD failed, trying GET for \(url.absoluteString)")
-        if let resolved = await inspect(url, method: "GET", rangeFirstByte: true) {
+        switch await inspect(url, method: "GET", rangeFirstByte: true) {
+        case .resolved(let resolved):
             print("probe: GET success for \(url.absoluteString)")
             return .success(resolved)
+        case .webPage:
+            print("probe: GET returned a web page for \(url.absoluteString)")
+            return .failure(Self.webPageFailureMessage)
+        case .unreachable:
+            break
         }
         print("probe: both failed for \(url.absoluteString)")
         return .failure("The link isn't reachable, or its type isn't a supported audio or video file.")
     }
 
-    private func inspect(_ url: URL, method: String, rangeFirstByte: Bool = false) async -> ResolvedMedia? {
+    private static let webPageFailureMessage =
+        "This link points to a web page, not a direct audio or video file. Paste a link that ends in .mp3, .m4a, .mp4, or similar."
+
+    private func inspect(_ url: URL, method: String, rangeFirstByte: Bool = false) async -> InspectResult {
         var request = URLRequest(url: url)
         request.httpMethod = method
         if rangeFirstByte { request.setValue("bytes=0-0", forHTTPHeaderField: "Range") }
 
         var http: HTTPURLResponse?
         do {
-            let (data, response) = try await probeSession.data(for: request)
+            let (_, response) = try await probeSession.data(for: request)
             http = response as? HTTPURLResponse
             if let http = http, !(200..<400).contains(http.statusCode) {
                 print("inspect: status code \(http.statusCode) for \(url.absoluteString)")
-                return nil
+                return .unreachable
             }
             print("inspect: response headers \(http?.allHeaderFields ?? [:]) for \(url.absoluteString)")
         } catch {
             print("inspect: error \(error) for \(url.absoluteString)")
-            return nil
+            return .unreachable
         }
         guard let http = http,
               (200..<400).contains(http.statusCode) else {
-            return nil
+            return .unreachable
         }
 
         // Resolve media kind from the server's Content-Type, then fall back to the
         // URL's file extension so correctly-typed but header-sparse servers still work.
         let kind = SupportedMedia.kind(forMIME: http.value(forHTTPHeaderField: "Content-Type"))
             ?? SupportedMedia.kind(forExtension: url.pathExtension)
-        guard let mediaKind = kind else { return nil }
+        guard let mediaKind = kind else {
+            let mime = SupportedMedia.normalizedMIME(http.value(forHTTPHeaderField: "Content-Type"))
+            if mime?.hasPrefix("text/") == true {
+                return .webPage
+            }
+            return .unreachable
+        }
 
         let title = (http.suggestedFilename.map { Self.title(fromFilename: $0) })
             ?? Self.suggestedTitle(from: url)
 
         let expected = Self.expectedLength(from: http)
-        return ResolvedMedia(title: title, kind: mediaKind, expectedBytes: expected)
+        return .resolved(ResolvedMedia(title: title, kind: mediaKind, expectedBytes: expected))
     }
+
 
     // MARK: - Downloading
 
