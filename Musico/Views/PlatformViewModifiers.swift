@@ -50,4 +50,11 @@ extension View {
         self
 #endif
     }
+
+    /// Makes a library row tappable without wrapping it in `Button`, so trailing
+    /// swipe actions render as full-height iOS-style actions instead of compact circles.
+    func musicoLibraryRowTap(action: @escaping () -> Void) -> some View {
+        contentShape(Rectangle())
+            .onTapGesture(perform: action)
+    }
 }

@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackController
+    @AppStorage("librarySort") private var sortRaw = LibrarySortOption.dateAdded.rawValue
+    @AppStorage("libraryKindFilter") private var filterRaw = MediaKindFilter.all.rawValue
     @State private var isCreatingPlaylist = false
     @State private var playlistName = ""
     @State private var isImporterPresented = false
@@ -11,8 +13,17 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var artworkTargetItem: LibraryItem?
     @State private var isArtworkImporterPresented = false
+    @State private var editingItem: LibraryItem?
 
-    private var filteredItems: [LibraryItem] {
+    private var sortOption: LibrarySortOption {
+        LibrarySortOption(rawValue: sortRaw) ?? .dateAdded
+    }
+
+    private var kindFilter: MediaKindFilter {
+        MediaKindFilter(rawValue: filterRaw) ?? .all
+    }
+
+    private var searchedItems: [LibraryItem] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return library.items }
         return library.items.filter {
@@ -22,9 +33,43 @@ struct LibraryView: View {
         }
     }
 
+    private var displayedItems: [LibraryItem] {
+        library.sortedItems(searchedItems, by: sortOption, filter: kindFilter)
+    }
+
+    private var recentlyPlayed: [LibraryItem] {
+        library.recentlyPlayedItems()
+    }
+
     var body: some View {
         NavigationView {
             List {
+                if !recentlyPlayed.isEmpty && searchText.isEmpty {
+                    Section("Recently Played") {
+                        ForEach(recentlyPlayed.prefix(10)) { item in
+                            MediaRow(item: item)
+                                .musicoLibraryRowTap {
+                                    playback.play(item, from: recentlyPlayed, fileURL: library.fileURL)
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button {
+                                        editingItem = item
+                                    } label: {
+                                        Text("Edit")
+                                    }
+                                    .tint(.blue)
+
+                                    Button(role: .destructive) {
+                                        if playback.currentItem?.id == item.id { playback.stop() }
+                                        library.delete(item)
+                                    } label: {
+                                        Text("Delete")
+                                    }
+                                }
+                        }
+                    }
+                }
+
                 Section("Playlists") {
                     if library.playlists.isEmpty {
                         Text("No playlists yet")
@@ -45,9 +90,11 @@ struct LibraryView: View {
                                 Image(systemName: "music.note.list")
                             }
                         }
-                        .swipeActions {
-                            Button(role: .destructive) { library.deletePlaylist(playlist) } label: {
-                                Label("Delete", systemImage: "trash")
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                library.deletePlaylist(playlist)
+                            } label: {
+                                Text("Delete")
                             }
                         }
                     }
@@ -64,46 +111,56 @@ struct LibraryView: View {
                     if library.items.isEmpty {
                         Text("Import audio or video files from this iPhone, iCloud Drive, or another Files location, or download a link from the Add tab.")
                             .foregroundColor(.secondary)
-                    } else if filteredItems.isEmpty {
-                        Text("No matches for \"\(searchText)\".")
+                    } else if displayedItems.isEmpty {
+                        Text(emptyResultsMessage)
                             .foregroundColor(.secondary)
                     }
-                    ForEach(filteredItems) { item in
-                        Button {
-                            playback.play(item, from: library.items, fileURL: library.fileURL)
-                        } label: {
-                            MediaRow(item: item)
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            if !library.playlists.isEmpty {
-                                Menu("Add to Playlist") {
-                                    ForEach(library.playlists) { playlist in
-                                        Button(playlist.name) { library.add(item, to: playlist) }
+                    ForEach(displayedItems) { item in
+                        MediaRow(item: item)
+                            .musicoLibraryRowTap {
+                                playback.play(item, from: displayedItems, fileURL: library.fileURL)
+                            }
+                            .contextMenu {
+                                Button {
+                                    editingItem = item
+                                } label: {
+                                    Label("Edit Title & Artist", systemImage: "pencil")
+                                }
+                                if !library.playlists.isEmpty {
+                                    Menu("Add to Playlist") {
+                                        ForEach(library.playlists) { playlist in
+                                            Button(playlist.name) { library.add(item, to: playlist) }
+                                        }
                                     }
                                 }
+                                Button {
+                                    artworkTargetItem = item
+                                    isArtworkImporterPresented = true
+                                } label: {
+                                    Label("Set Cover Image", systemImage: "photo")
+                                }
+                                Button(role: .destructive) {
+                                    if playback.currentItem?.id == item.id { playback.stop() }
+                                    library.delete(item)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
-                            Button {
-                                artworkTargetItem = item
-                                isArtworkImporterPresented = true
-                            } label: {
-                                Label("Set Cover Image", systemImage: "photo")
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button {
+                                    editingItem = item
+                                } label: {
+                                    Text("Edit")
+                                }
+                                .tint(.blue)
+
+                                Button(role: .destructive) {
+                                    if playback.currentItem?.id == item.id { playback.stop() }
+                                    library.delete(item)
+                                } label: {
+                                    Text("Delete")
+                                }
                             }
-                            Button(role: .destructive) {
-                                if playback.currentItem?.id == item.id { playback.stop() }
-                                library.delete(item)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
-                        .swipeActions {
-                            Button(role: .destructive) {
-                                if playback.currentItem?.id == item.id { playback.stop() }
-                                library.delete(item)
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
                     }
                 }
             }
@@ -111,6 +168,23 @@ struct LibraryView: View {
             .navigationTitle("Library")
             .searchable(text: $searchText, prompt: "Search by title or artist")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Menu {
+                        Picker("Sort By", selection: $sortRaw) {
+                            ForEach(LibrarySortOption.allCases) { option in
+                                Text(option.label).tag(option.rawValue)
+                            }
+                        }
+                        Picker("Show", selection: $filterRaw) {
+                            ForEach(MediaKindFilter.allCases) { option in
+                                Text(option.label).tag(option.rawValue)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityLabel("Sort and Filter")
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { isCreatingPlaylist = true } label: {
                         Image(systemName: "plus")
@@ -139,6 +213,9 @@ struct LibraryView: View {
                         }
                     }
                 }
+            }
+            .sheet(item: $editingItem) { item in
+                EditItemSheet(item: item)
             }
             .fileImporter(
                 isPresented: $isImporterPresented,
@@ -180,6 +257,17 @@ struct LibraryView: View {
         .musicoStackNavigationStyle()
     }
 
+    private var emptyResultsMessage: String {
+        if !searchText.isEmpty {
+            return "No matches for \"\(searchText)\"."
+        }
+        switch kindFilter {
+        case .audio: return "No audio files in your library."
+        case .video: return "No video files in your library."
+        case .all: return "No media found."
+        }
+    }
+
     private var errorIsPresented: Binding<Bool> {
         Binding(
             get: { library.lastError != nil },
@@ -197,7 +285,9 @@ struct PlaylistDetailView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackController
     let playlistID: UUID
+    @AppStorage("librarySort") private var sortRaw = LibrarySortOption.dateAdded.rawValue
     @State private var searchText = ""
+    @State private var editingItem: LibraryItem?
 
     private var playlist: Playlist? {
         library.playlists.first { $0.id == playlistID }
@@ -208,13 +298,22 @@ struct PlaylistDetailView: View {
         return library.items(in: playlist)
     }
 
+    private var sortOption: LibrarySortOption {
+        LibrarySortOption(rawValue: sortRaw) ?? .dateAdded
+    }
+
     private var filteredItems: [LibraryItem] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return items }
-        return items.filter {
-            $0.title.localizedCaseInsensitiveContains(query) ||
-            $0.artist.localizedCaseInsensitiveContains(query)
+        let searched: [LibraryItem]
+        if query.isEmpty {
+            searched = items
+        } else {
+            searched = items.filter {
+                $0.title.localizedCaseInsensitiveContains(query) ||
+                $0.artist.localizedCaseInsensitiveContains(query)
+            }
         }
+        return library.sortedItems(searched, by: sortOption, filter: .all)
     }
 
     var body: some View {
@@ -222,16 +321,17 @@ struct PlaylistDetailView: View {
             if !items.isEmpty {
                 Section {
                     Button {
-                        guard let first = items.first else { return }
-                        playback.play(first, from: items, fileURL: library.fileURL)
+                        guard let first = filteredItems.first ?? items.first else { return }
+                        playback.play(first, from: filteredItems.isEmpty ? items : filteredItems, fileURL: library.fileURL)
                     } label: {
                         Label("Play", systemImage: "play.fill")
                             .frame(maxWidth: .infinity)
                     }
                     Button {
-                        guard let random = items.randomElement() else { return }
+                        let pool = filteredItems.isEmpty ? items : filteredItems
+                        guard let random = pool.randomElement() else { return }
                         if !playback.isShuffleEnabled { playback.toggleShuffle() }
-                        playback.play(random, from: items, fileURL: library.fileURL)
+                        playback.play(random, from: pool, fileURL: library.fileURL)
                     } label: {
                         Label("Shuffle", systemImage: "shuffle")
                             .frame(maxWidth: .infinity)
@@ -248,24 +348,39 @@ struct PlaylistDetailView: View {
                         .foregroundColor(.secondary)
                 }
                 ForEach(filteredItems) { item in
-                    Button {
-                        playback.play(item, from: items, fileURL: library.fileURL)
-                    } label: {
-                        MediaRow(item: item)
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions {
-                        Button(role: .destructive) {
-                            library.remove(item, from: playlistID)
-                        } label: {
-                            Label("Remove", systemImage: "minus.circle")
+                    MediaRow(item: item)
+                        .musicoLibraryRowTap {
+                            playback.play(item, from: filteredItems, fileURL: library.fileURL)
                         }
-                    }
+                        .contextMenu {
+                            Button {
+                                editingItem = item
+                            } label: {
+                                Label("Edit Title & Artist", systemImage: "pencil")
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button {
+                                editingItem = item
+                            } label: {
+                                Text("Edit")
+                            }
+                            .tint(.blue)
+
+                            Button(role: .destructive) {
+                                library.remove(item, from: playlistID)
+                            } label: {
+                                Text("Remove")
+                            }
+                        }
                 }
             }
         }
         .musicoInsetGroupedListStyle()
         .navigationTitle(playlist?.name ?? "Playlist")
         .searchable(text: $searchText, prompt: "Search by title or artist")
+        .sheet(item: $editingItem) { item in
+            EditItemSheet(item: item)
+        }
     }
 }

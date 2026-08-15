@@ -127,6 +127,7 @@ final class DownloadManager: NSObject, ObservableObject {
                 $0.title = resolved.title
                 $0.mediaKind = resolved.kind
                 $0.totalBytes = resolved.expectedBytes
+                $0.thumbnailURL = resolved.thumbnailURL
                 $0.state = .downloading
                 $0.detail = "Downloading \(resolved.kind.label.lowercased())…"
             }
@@ -507,12 +508,14 @@ extension DownloadManager: URLSessionDownloadDelegate {
 
     @MainActor
     private func registerCompleted(recordID: UUID, storedName: String, kind: MediaKind, originalName: String) {
-        let title = records.first { $0.id == recordID }?.title ?? Self.title(fromFilename: originalName)
+        let record = records.first { $0.id == recordID }
+        let title = record?.title ?? Self.title(fromFilename: originalName)
         library?.adoptDownloadedFile(
             storedFilename: storedName,
             title: title,
             kind: kind,
-            originalFilename: originalName
+            originalFilename: originalName,
+            thumbnailURL: record?.thumbnailURL
         )
         update(recordID) {
             $0.state = .completed

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 final class LibraryStore: ObservableObject {
     @Published private(set) var items: [LibraryItem] = []
     @Published private(set) var playlists: [Playlist] = []
+    @Published private(set) var recentlyPlayedIDs: [UUID] = []
     @Published var lastError: String?
 
     init() {
@@ -19,6 +20,43 @@ final class LibraryStore: ObservableObject {
         guard let filename = item.artworkFilename else { return nil }
         let url = AppPaths.artwork.appendingPathComponent(filename)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    func recentlyPlayedItems() -> [LibraryItem] {
+        recentlyPlayedIDs.compactMap { id in items.first(where: { $0.id == id }) }
+    }
+
+    func recordPlayed(_ itemID: UUID) {
+        recentlyPlayedIDs.removeAll { $0 == itemID }
+        recentlyPlayedIDs.insert(itemID, at: 0)
+        if recentlyPlayedIDs.count > 30 {
+            recentlyPlayedIDs = Array(recentlyPlayedIDs.prefix(30))
+        }
+        save()
+    }
+
+    func sortedItems(
+        _ source: [LibraryItem],
+        by sort: LibrarySortOption,
+        filter kindFilter: MediaKindFilter
+    ) -> [LibraryItem] {
+        let filtered = source.filter { kindFilter.matches($0.kind) }
+        switch sort {
+        case .dateAdded:
+            return filtered.sorted { $0.addedAt > $1.addedAt }
+        case .title:
+            return filtered.sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+        case .artist:
+            return filtered.sorted {
+                let artistCompare = $0.artist.localizedCaseInsensitiveCompare($1.artist)
+                if artistCompare == .orderedSame {
+                    return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                }
+                return artistCompare == .orderedAscending
+            }
+        }
     }
 
     func importFiles(_ sourceURLs: [URL]) async {
@@ -101,13 +139,21 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Register a file the DownloadManager has already moved into the media directory.
-    func adoptDownloadedFile(storedFilename: String, title: String, kind: MediaKind, originalFilename: String) {
+    func adoptDownloadedFile(
+        storedFilename: String,
+        title: String,
+        kind: MediaKind,
+        originalFilename: String,
+        thumbnailURL: URL? = nil
+    ) {
         let mediaURL = AppPaths.media.appendingPathComponent(storedFilename)
         Task {
             let metadata = await MediaMetadataExtractor.extract(from: mediaURL)
             var artworkFilename: String?
             if let artworkData = metadata.artworkData {
                 artworkFilename = try? MediaMetadataExtractor.saveArtwork(artworkData, to: AppPaths.artwork)
+            } else if let thumbnailURL {
+                artworkFilename = await downloadArtwork(from: thumbnailURL)
             }
 
             let item = LibraryItem(
@@ -160,6 +206,7 @@ final class LibraryStore: ObservableObject {
             try? FileManager.default.removeItem(at: AppPaths.artwork.appendingPathComponent(artworkFilename))
         }
         items.removeAll { $0.id == item.id }
+        recentlyPlayedIDs.removeAll { $0 == item.id }
         for index in playlists.indices {
             playlists[index].itemIDs.removeAll { $0 == item.id }
         }
@@ -195,6 +242,18 @@ final class LibraryStore: ObservableObject {
         playlist.itemIDs.compactMap { id in items.first(where: { $0.id == id }) }
     }
 
+    private func downloadArtwork(from url: URL) async -> String? {
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return nil
+            }
+            return try MediaMetadataExtractor.saveArtwork(data, to: AppPaths.artwork)
+        } catch {
+            return nil
+        }
+    }
+
     private func load() {
         AppPaths.ensureDirectories()
         do {
@@ -203,6 +262,9 @@ final class LibraryStore: ObservableObject {
             let persisted = try JSONDecoder.musico.decode(PersistedLibrary.self, from: data)
             items = persisted.items.filter { FileManager.default.fileExists(atPath: fileURL(for: $0).path) }
             playlists = persisted.playlists
+            recentlyPlayedIDs = persisted.recentlyPlayedIDs.filter { id in
+                items.contains(where: { $0.id == id })
+            }
         } catch {
             lastError = "The saved library could not be loaded: \(error.localizedDescription)"
         }
@@ -211,7 +273,9 @@ final class LibraryStore: ObservableObject {
     private func save() {
         AppPaths.ensureDirectories()
         do {
-            let data = try JSONEncoder.musico.encode(PersistedLibrary(items: items, playlists: playlists))
+            let data = try JSONEncoder.musico.encode(
+                PersistedLibrary(items: items, playlists: playlists, recentlyPlayedIDs: recentlyPlayedIDs)
+            )
             try data.write(to: AppPaths.libraryFile, options: .atomic)
         } catch {
             lastError = "Changes could not be saved: \(error.localizedDescription)"

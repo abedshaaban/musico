@@ -23,6 +23,8 @@
 		A1000000000000000000000E /* MiniPlayerBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* MiniPlayerBar.swift */; };
 		A1000000000000000000000F /* MediaArtworkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* MediaArtworkView.swift */; };
 		A10000000000000000000010 /* MediaMetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* MediaMetadataExtractor.swift */; };
+		A10000000000000000000011 /* EditItemSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* EditItemSheet.swift */; };
+		A10000000000000000000012 /* QueueView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* QueueView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +46,8 @@
 		B10000000000000000000010 /* MiniPlayerBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniPlayerBar.swift; sourceTree = "<group>"; };
 		B10000000000000000000011 /* MediaArtworkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaArtworkView.swift; sourceTree = "<group>"; };
 		B10000000000000000000012 /* MediaMetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaMetadataExtractor.swift; sourceTree = "<group>"; };
+		B10000000000000000000013 /* EditItemSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditItemSheet.swift; sourceTree = "<group>"; };
+		B10000000000000000000014 /* QueueView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -121,6 +125,8 @@
 				B1000000000000000000000E /* PlatformViewModifiers.swift */,
 				B10000000000000000000010 /* MiniPlayerBar.swift */,
 				B10000000000000000000011 /* MediaArtworkView.swift */,
+				B10000000000000000000013 /* EditItemSheet.swift */,
+				B10000000000000000000014 /* QueueView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -216,6 +222,8 @@
 				A1000000000000000000000E /* MiniPlayerBar.swift in Sources */,
 				A1000000000000000000000F /* MediaArtworkView.swift in Sources */,
 				A10000000000000000000010 /* MediaMetadataExtractor.swift in Sources */,
+				A10000000000000000000011 /* EditItemSheet.swift in Sources */,
+				A10000000000000000000012 /* QueueView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

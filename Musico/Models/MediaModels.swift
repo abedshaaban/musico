@@ -9,6 +9,46 @@ enum MediaKind: String, Codable, CaseIterable, Identifiable {
     var systemImage: String { self == .audio ? "music.note" : "film" }
 }
 
+enum LibrarySortOption: String, CaseIterable, Identifiable {
+    case dateAdded
+    case title
+    case artist
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .dateAdded: return "Date Added"
+        case .title: return "Title"
+        case .artist: return "Artist"
+        }
+    }
+}
+
+enum MediaKindFilter: String, CaseIterable, Identifiable {
+    case all
+    case audio
+    case video
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .audio: return "Audio"
+        case .video: return "Video"
+        }
+    }
+
+    func matches(_ kind: MediaKind) -> Bool {
+        switch self {
+        case .all: return true
+        case .audio: return kind == .audio
+        case .video: return kind == .video
+        }
+    }
+}
+
 struct LibraryItem: Identifiable, Codable, Hashable {
     let id: UUID
     var title: String
@@ -61,6 +101,7 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
     var mediaKind: MediaKind?
     var receivedBytes: Int64
     var totalBytes: Int64
+    var thumbnailURL: URL?
 
     init(
         id: UUID = UUID(),
@@ -73,7 +114,8 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
         remoteURL: URL? = nil,
         mediaKind: MediaKind? = nil,
         receivedBytes: Int64 = 0,
-        totalBytes: Int64 = 0
+        totalBytes: Int64 = 0,
+        thumbnailURL: URL? = nil
     ) {
         self.id = id
         self.title = title
@@ -86,12 +128,31 @@ struct DownloadRecord: Identifiable, Codable, Hashable {
         self.mediaKind = mediaKind
         self.receivedBytes = receivedBytes
         self.totalBytes = totalBytes
+        self.thumbnailURL = thumbnailURL
     }
 }
 
 struct PersistedLibrary: Codable {
     var items: [LibraryItem]
     var playlists: [Playlist]
+    var recentlyPlayedIDs: [UUID]
+
+    private enum CodingKeys: String, CodingKey {
+        case items, playlists, recentlyPlayedIDs
+    }
+
+    init(items: [LibraryItem], playlists: [Playlist], recentlyPlayedIDs: [UUID] = []) {
+        self.items = items
+        self.playlists = playlists
+        self.recentlyPlayedIDs = recentlyPlayedIDs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = try container.decode([LibraryItem].self, forKey: .items)
+        playlists = try container.decode([Playlist].self, forKey: .playlists)
+        recentlyPlayedIDs = try container.decodeIfPresent([UUID].self, forKey: .recentlyPlayedIDs) ?? []
+    }
 }
 
 struct PersistedDownloads: Codable {

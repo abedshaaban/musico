@@ -16,20 +16,27 @@ struct DownloadsView: View {
                     List {
                         ForEach(downloads.records) { record in
                             DownloadRow(record: record)
-                                .swipeActions {
-                                    Button(role: .destructive) { downloads.remove(record) } label: {
-                                        Label("Remove", systemImage: "trash")
-                                    }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     if record.state.isActive {
-                                        Button { downloads.cancel(record) } label: {
-                                            Label("Cancel", systemImage: "xmark")
+                                        Button {
+                                            downloads.cancel(record)
+                                        } label: {
+                                            Text("Cancel")
                                         }
                                         .tint(.orange)
                                     } else if record.state == .failed || record.state == .cancelled {
-                                        Button { downloads.retry(record) } label: {
-                                            Label("Retry", systemImage: "arrow.clockwise")
+                                        Button {
+                                            downloads.retry(record)
+                                        } label: {
+                                            Text("Retry")
                                         }
                                         .tint(.blue)
+                                    }
+
+                                    Button(role: .destructive) {
+                                        downloads.remove(record)
+                                    } label: {
+                                        Text("Remove")
                                     }
                                 }
                         }

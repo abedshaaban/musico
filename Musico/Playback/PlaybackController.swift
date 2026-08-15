@@ -11,16 +11,21 @@ final class PlaybackController: ObservableObject {
     @Published private(set) var elapsed: Double = 0
     @Published private(set) var duration: Double = 0
     @Published var isShuffleEnabled = false
+    @Published var isAudioOnlyMode = false
+    @Published private(set) var queue: [LibraryItem] = []
+    @Published private(set) var currentQueueIndex = 0
+    @Published private(set) var sleepTimerRemaining: TimeInterval?
 
     /// Last playback error or warning, if any, for UI/debugging.
     @Published private(set) var lastPlaybackIssue: String?
 
-    private var queue: [LibraryItem] = []
-    private var currentIndex = 0
+    private weak var library: LibraryStore?
+    private var cachedFileURL: ((LibraryItem) -> URL)?
     private var timeObserver: Any?
     private var playbackEndObserver: NSObjectProtocol?
     private var statusObservation: NSKeyValueObservation?
     private var errorObservation: NSKeyValueObservation?
+    private var sleepTimerTask: Task<Void, Never>?
 
     init() {
         configureAudioSession()
@@ -36,17 +41,22 @@ final class PlaybackController: ObservableObject {
     }
 
     deinit {
+        sleepTimerTask?.cancel()
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let playbackEndObserver {
             NotificationCenter.default.removeObserver(playbackEndObserver)
         }
     }
 
+    func configure(library: LibraryStore) {
+        self.library = library
+    }
+
     func play(_ item: LibraryItem, from items: [LibraryItem], fileURL: @escaping (LibraryItem) -> URL) {
         queue = items
-        currentIndex = items.firstIndex(of: item) ?? 0
-        start(item, url: fileURL(item))
+        currentQueueIndex = items.firstIndex(of: item) ?? 0
         cachedFileURL = fileURL
+        start(item, url: fileURL(item))
     }
 
     func togglePlayback() {
@@ -68,6 +78,8 @@ final class PlaybackController: ObservableObject {
         isPlaying = false
         elapsed = 0
         duration = 0
+        queue = []
+        currentQueueIndex = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
@@ -80,13 +92,13 @@ final class PlaybackController: ObservableObject {
     func playNext() {
         guard !queue.isEmpty, let fileURL = cachedFileURL else { return }
         if isShuffleEnabled, queue.count > 1 {
-            var next = currentIndex
-            while next == currentIndex { next = Int.random(in: queue.indices) }
-            currentIndex = next
+            var next = currentQueueIndex
+            while next == currentQueueIndex { next = Int.random(in: queue.indices) }
+            currentQueueIndex = next
         } else {
-            currentIndex = (currentIndex + 1) % queue.count
+            currentQueueIndex = (currentQueueIndex + 1) % queue.count
         }
-        let item = queue[currentIndex]
+        let item = queue[currentQueueIndex]
         start(item, url: fileURL(item))
     }
 
@@ -96,8 +108,8 @@ final class PlaybackController: ObservableObject {
             seek(to: 0)
             return
         }
-        currentIndex = currentIndex == 0 ? queue.count - 1 : currentIndex - 1
-        let item = queue[currentIndex]
+        currentQueueIndex = currentQueueIndex == 0 ? queue.count - 1 : currentQueueIndex - 1
+        let item = queue[currentQueueIndex]
         start(item, url: fileURL(item))
     }
 
@@ -105,7 +117,91 @@ final class PlaybackController: ObservableObject {
         isShuffleEnabled.toggle()
     }
 
-    private var cachedFileURL: ((LibraryItem) -> URL)?
+    func jumpToQueueItem(_ item: LibraryItem) {
+        guard let index = queue.firstIndex(of: item), let fileURL = cachedFileURL else { return }
+        currentQueueIndex = index
+        start(item, url: fileURL(item))
+    }
+
+    func moveQueueItem(from source: IndexSet, to destination: Int) {
+        guard let current = currentItem else {
+            queue.move(fromOffsets: source, toOffset: destination)
+            return
+        }
+        queue.move(fromOffsets: source, toOffset: destination)
+        currentQueueIndex = queue.firstIndex(of: current) ?? currentQueueIndex
+    }
+
+    func removeFromQueue(at offsets: IndexSet) {
+        for index in offsets.sorted(by: >) {
+            guard queue.indices.contains(index) else { continue }
+            let removingCurrent = index == currentQueueIndex
+            queue.remove(at: index)
+
+            if removingCurrent {
+                if queue.isEmpty {
+                    stop()
+                    return
+                }
+                currentQueueIndex = min(index, queue.count - 1)
+                if let fileURL = cachedFileURL {
+                    start(queue[currentQueueIndex], url: fileURL(queue[currentQueueIndex]))
+                }
+            } else if index < currentQueueIndex {
+                currentQueueIndex -= 1
+            }
+        }
+    }
+
+    func syncCurrentItem(with library: LibraryStore) {
+        guard let current = currentItem,
+              let updated = library.items.first(where: { $0.id == current.id }) else { return }
+        currentItem = updated
+        if currentQueueIndex < queue.count, queue[currentQueueIndex].id == updated.id {
+            queue[currentQueueIndex] = updated
+        }
+        if let index = queue.firstIndex(where: { $0.id == updated.id }) {
+            queue[index] = updated
+        }
+        updateNowPlayingInfo()
+    }
+
+    func startSleepTimer(minutes: Int) {
+        cancelSleepTimer()
+        let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        sleepTimerRemaining = end.timeIntervalSinceNow
+
+        sleepTimerTask = Task {
+            while !Task.isCancelled {
+                let remaining = end.timeIntervalSinceNow
+                if remaining <= 0 {
+                    if isPlaying { togglePlayback() }
+                    cancelSleepTimer()
+                    return
+                }
+                sleepTimerRemaining = remaining
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    func cancelSleepTimer() {
+        sleepTimerTask?.cancel()
+        sleepTimerTask = nil
+        sleepTimerRemaining = nil
+    }
+
+    var sleepTimerLabel: String? {
+        guard let remaining = sleepTimerRemaining, remaining > 0 else { return nil }
+        let total = max(Int(remaining.rounded(.up)), 0)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+        return String(format: "%d:%02d", minutes, seconds)
+    }
 
     private func start(_ item: LibraryItem, url: URL) {
         currentItem = item
@@ -114,6 +210,8 @@ final class PlaybackController: ObservableObject {
         lastPlaybackIssue = nil
         statusObservation?.invalidate()
         errorObservation?.invalidate()
+
+        library?.recordPlayed(item.id)
 
         let playerItem = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: playerItem)

@@ -14,7 +14,10 @@ struct MusicoApp: App {
                 .environmentObject(library)
                 .environmentObject(downloads)
                 .environmentObject(playback)
-                .onAppear { downloads.configure(library: library) }
+                .onAppear {
+                    downloads.configure(library: library)
+                    playback.configure(library: library)
+                }
         }
     }
 }

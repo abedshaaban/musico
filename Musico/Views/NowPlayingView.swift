@@ -4,6 +4,9 @@ import SwiftUI
 struct NowPlayingView: View {
     @EnvironmentObject private var playback: PlaybackController
     @EnvironmentObject private var library: LibraryStore
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var isQueuePresented = false
+    @State private var isSleepTimerPresented = false
 
     var body: some View {
         NavigationView {
@@ -19,6 +22,20 @@ struct NowPlayingView: View {
                                 .lineLimit(2)
                             Text(item.artist)
                                 .foregroundColor(.secondary)
+                        }
+
+                        if let sleepLabel = playback.sleepTimerLabel {
+                            Label("Sleep in \(sleepLabel)", systemImage: "moon.zzz")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        if item.kind == .video && (playback.isAudioOnlyMode || scenePhase != .active) {
+                            Label("Audio only — screen off playback enabled", systemImage: "waveform")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
                         }
 
                         VStack(spacing: 6) {
@@ -54,8 +71,8 @@ struct NowPlayingView: View {
                             Button { playback.playNext() } label: {
                                 Image(systemName: "forward.fill")
                             }
-                            Button { playback.seek(to: 0) } label: {
-                                Image(systemName: "arrow.counterclockwise")
+                            Button { isQueuePresented = true } label: {
+                                Image(systemName: "list.bullet")
                             }
                         }
                         .font(.title2)
@@ -87,18 +104,61 @@ struct NowPlayingView: View {
             }
             .navigationTitle("Now Playing")
             .musicoInlineNavigationTitle()
+            .toolbar {
+                if playback.currentItem != nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            Button { isQueuePresented = true } label: {
+                                Label("Up Next", systemImage: "list.bullet")
+                            }
+                            Button { isSleepTimerPresented = true } label: {
+                                Label("Sleep Timer", systemImage: "moon.zzz")
+                            }
+                            if playback.currentItem?.kind == .video {
+                                Toggle(isOn: $playback.isAudioOnlyMode) {
+                                    Label("Audio Only", systemImage: "waveform")
+                                }
+                            }
+                            if playback.sleepTimerRemaining != nil {
+                                Button("Cancel Sleep Timer", role: .destructive) {
+                                    playback.cancelSleepTimer()
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $isQueuePresented) {
+                QueueView()
+            }
+            .sheet(isPresented: $isSleepTimerPresented) {
+                SleepTimerSheet()
+            }
         }
         .musicoStackNavigationStyle()
+        .onChange(of: scenePhase) { phase in
+            if phase == .background, playback.currentItem?.kind == .video {
+                playback.isAudioOnlyMode = true
+            }
+        }
     }
 
     @ViewBuilder
     private func mediaArtwork(for item: LibraryItem) -> some View {
-        if item.kind == .video {
+        let showVideoPlayer = item.kind == .video
+            && !playback.isAudioOnlyMode
+            && scenePhase == .active
+
+        if showVideoPlayer {
             VideoPlayer(player: playback.player)
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         } else if library.artworkURL(for: item) != nil {
+            LargeMediaArtworkView(item: item)
+        } else if item.kind == .video {
             LargeMediaArtworkView(item: item)
         } else {
             ZStack {

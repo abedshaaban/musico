@@ -31,9 +31,15 @@ enum YouTubeResolver {
     }
 
     /// Resolve a playable stream for a YouTube video.
-    /// Returns the direct stream URL, title, and media kind.
+    /// Returns the direct stream URL, title, media kind, expected size, and thumbnail.
     /// Throws a descriptive error when the video cannot be resolved.
-    static func resolve(videoID: String) async throws -> (url: URL, title: String, kind: MediaKind, expectedBytes: Int64) {
+    static func resolve(videoID: String) async throws -> (
+        url: URL,
+        title: String,
+        kind: MediaKind,
+        expectedBytes: Int64,
+        thumbnailURL: URL?
+    ) {
         let endpoint = URL(string: "https://www.youtube.com/youtubei/v1/player")!
 
         // Try multiple client configurations in order of reliability.
@@ -64,6 +70,7 @@ enum YouTubeResolver {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
 
             let title = (json["videoDetails"] as? [String: Any])?["title"] as? String ?? "YouTube Video"
+            let thumbnailURL = thumbnailURL(from: json)
 
             // Some videos fail with a playability status; surface a useful message.
             if let playability = json["playabilityStatus"] as? [String: Any],
@@ -110,10 +117,24 @@ enum YouTubeResolver {
 
                 let expected = Int64(format["contentLength"] as? String ?? "") ?? 0
                 print("YouTubeResolver: selected format \(format["itag"] ?? "?") \(mimeType) bitrate=\(format["bitrate"] ?? 0)")
-                return (streamURL, title, kind, expected)
+                return (streamURL, title, kind, expected, thumbnailURL)
             }
         }
 
         throw NSError(domain: "YouTubeResolver", code: 2, userInfo: [NSLocalizedDescriptionKey: "No playable YouTube stream could be found for this video."])
+    }
+
+    private static func thumbnailURL(from json: [String: Any]) -> URL? {
+        guard let videoDetails = json["videoDetails"] as? [String: Any],
+              let thumbnail = videoDetails["thumbnail"] as? [String: Any],
+              let thumbnails = thumbnail["thumbnails"] as? [[String: Any]] else {
+            return nil
+        }
+
+        let best = thumbnails.max {
+            ($0["width"] as? Int ?? 0) < ($1["width"] as? Int ?? 0)
+        }
+        guard let urlString = best?["url"] as? String else { return nil }
+        return URL(string: urlString)
     }
 }
