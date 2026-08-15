@@ -96,7 +96,8 @@ struct AddByURLSheet: View {
         NavigationView {
             Form {
                 Section {
-                    TextField("https://example.com/song.m4a", text: $urlText)
+                    TextField(musicoPrompt: "https://example.com/song.m4a", text: $urlText)
+                        .musicoFormTextField()
                         .textContentType(.URL)
                         .disableAutocorrection(true)
                         .musicoURLKeyboard()

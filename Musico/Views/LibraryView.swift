@@ -98,7 +98,8 @@ struct LibraryView: View {
             .sheet(isPresented: $isCreatingPlaylist) {
                 NavigationView {
                     Form {
-                        TextField("Playlist name", text: $playlistName)
+                        TextField(musicoPrompt: "Playlist name", text: $playlistName)
+                            .musicoFormTextField()
                     }
                     .navigationTitle("New Playlist")
                     .musicoInlineNavigationTitle()

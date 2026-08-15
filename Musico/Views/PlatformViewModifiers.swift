@@ -1,6 +1,19 @@
 import SwiftUI
 
+extension TextField where Label == Text {
+    /// Gray placeholder instead of the default accent/link tint (notably on URL fields).
+    init(musicoPrompt placeholder: String, text: Binding<String>) {
+        self.init("", text: text, prompt: Text(placeholder).foregroundColor(.secondary))
+    }
+}
+
 extension View {
+    /// Primary input text and caret for form fields.
+    func musicoFormTextField() -> some View {
+        foregroundColor(.primary)
+            .tint(.primary)
+    }
+
     @ViewBuilder
     func musicoInsetGroupedListStyle() -> some View {
 #if os(iOS)
