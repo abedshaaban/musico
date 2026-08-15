@@ -27,4 +27,14 @@ extension View {
         self
 #endif
     }
+
+    @ViewBuilder
+    func musicoURLKeyboard() -> some View {
+#if os(iOS)
+        keyboardType(.URL)
+            .textInputAutocapitalization(.never)
+#else
+        self
+#endif
+    }
 }

@@ -12,12 +12,12 @@ final class LibraryStore: ObservableObject {
     }
 
     func fileURL(for item: LibraryItem) -> URL {
-        Self.mediaDirectory.appendingPathComponent(item.localFilename)
+        AppPaths.media.appendingPathComponent(item.localFilename)
     }
 
     func importFiles(_ sourceURLs: [URL]) async {
         do {
-            let destination = Self.mediaDirectory
+            let destination = AppPaths.media
             let imported = try await Task.detached(priority: .userInitiated) {
                 var newItems: [LibraryItem] = []
                 try FileManager.default.createDirectory(
@@ -79,6 +79,22 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// Register a file the DownloadManager has already moved into the media directory.
+    func adoptDownloadedFile(storedFilename: String, title: String, kind: MediaKind, originalFilename: String) {
+        let item = LibraryItem(
+            id: UUID(),
+            title: title.isEmpty ? "Untitled" : title,
+            artist: "Unknown Artist",
+            kind: kind,
+            localFilename: storedFilename,
+            originalFilename: originalFilename,
+            addedAt: Date()
+        )
+        items.insert(item, at: 0)
+        items.sort { $0.addedAt > $1.addedAt }
+        save()
+    }
+
     func update(_ item: LibraryItem, title: String, artist: String) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].title = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -125,13 +141,10 @@ final class LibraryStore: ObservableObject {
     }
 
     private func load() {
+        AppPaths.ensureDirectories()
         do {
-            try FileManager.default.createDirectory(
-                at: Self.applicationSupportDirectory,
-                withIntermediateDirectories: true
-            )
-            guard FileManager.default.fileExists(atPath: Self.libraryFile.path) else { return }
-            let data = try Data(contentsOf: Self.libraryFile)
+            guard FileManager.default.fileExists(atPath: AppPaths.libraryFile.path) else { return }
+            let data = try Data(contentsOf: AppPaths.libraryFile)
             let persisted = try JSONDecoder.musico.decode(PersistedLibrary.self, from: data)
             items = persisted.items.filter { FileManager.default.fileExists(atPath: fileURL(for: $0).path) }
             playlists = persisted.playlists
@@ -141,45 +154,12 @@ final class LibraryStore: ObservableObject {
     }
 
     private func save() {
+        AppPaths.ensureDirectories()
         do {
-            try FileManager.default.createDirectory(
-                at: Self.applicationSupportDirectory,
-                withIntermediateDirectories: true
-            )
             let data = try JSONEncoder.musico.encode(PersistedLibrary(items: items, playlists: playlists))
-            try data.write(to: Self.libraryFile, options: .atomic)
+            try data.write(to: AppPaths.libraryFile, options: .atomic)
         } catch {
             lastError = "Changes could not be saved: \(error.localizedDescription)"
         }
-    }
-
-    private static var applicationSupportDirectory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Musico", isDirectory: true)
-    }
-
-    private static var mediaDirectory: URL {
-        applicationSupportDirectory.appendingPathComponent("Media", isDirectory: true)
-    }
-
-    private static var libraryFile: URL {
-        applicationSupportDirectory.appendingPathComponent("library.json")
-    }
-}
-
-private extension JSONEncoder {
-    static var musico: JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }
-}
-
-private extension JSONDecoder {
-    static var musico: JSONDecoder {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
     }
 }

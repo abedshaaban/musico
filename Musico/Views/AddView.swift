@@ -1,99 +1,159 @@
 import SwiftUI
-import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
-struct SearchImportView: View {
-    @EnvironmentObject private var library: LibraryStore
-    @EnvironmentObject private var playback: PlaybackController
-    @State private var searchText = ""
-    @State private var isImporterPresented = false
-    @State private var isImporting = false
+struct AddView: View {
+    @EnvironmentObject private var downloads: DownloadManager
+    @State private var isURLSheetPresented = false
 
-    private var filteredItems: [LibraryItem] {
-        guard !searchText.isEmpty else { return library.items }
-        return library.items.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText) ||
-            $0.artist.localizedCaseInsensitiveContains(searchText) ||
-            $0.originalFilename.localizedCaseInsensitiveContains(searchText)
-        }
+    private var activeCount: Int {
+        downloads.records.filter { $0.state.isActive }.count
     }
 
     var body: some View {
         NavigationView {
-            Group {
-                if library.items.isEmpty {
-                    VStack(spacing: 18) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 48, weight: .light))
-                            .foregroundColor(.secondary)
-                        Text("Import Your Media")
-                            .font(.title2.bold())
-                        Text("Choose audio or video files already on this iPhone, in iCloud Drive, or from another Files location you can access.")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 28)
-                        importButton
+            List {
+                Section {
+                    Button {
+                        isURLSheetPresented = true
+                    } label: {
+                        Label("Add from URL", systemImage: "link.badge.plus")
+                            .frame(maxWidth: .infinity)
+                            .font(.body.weight(.semibold))
                     }
-                } else {
-                    List {
-                        Section {
-                            importButton
-                        }
-                        Section("On This iPhone") {
-                            ForEach(filteredItems) { item in
-                                Button {
-                                    playback.play(item, from: filteredItems, fileURL: library.fileURL)
-                                } label: {
-                                    MediaRow(item: item, trailingText: item.kind.label)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
+                    .buttonStyle(.borderedProminent)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                } header: {
+                    headerView
+                } footer: {
+                    Text("Paste a direct https:// link to an audio or video file you're authorized to save. Musico validates the link, then downloads it in the background.")
+                }
+
+                if activeCount > 0 {
+                    Section {
+                        Label("\(activeCount) download\(activeCount == 1 ? "" : "s") in progress", systemImage: "arrow.down.circle")
+                            .foregroundColor(.secondary)
+                        Text("Track progress on the Downloads tab.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    .musicoInsetGroupedListStyle()
+                }
+
+                Section("What Musico won't do") {
+                    complianceRow("Never scrapes web pages or resolves stream manifests.")
+                    complianceRow("Never bypasses DRM or a service's access controls.")
+                    complianceRow("Links from protected streaming hosts are refused.")
                 }
             }
-            .navigationTitle("Search or Import")
-            .searchable(text: $searchText, prompt: "Titles, artists, or filenames")
-            .fileImporter(
-                isPresented: $isImporterPresented,
-                allowedContentTypes: [.audio, .movie],
-                allowsMultipleSelection: true
-            ) { result in
-                switch result {
-                case .success(let urls):
-                    isImporting = true
-                    Task {
-                        await library.importFiles(urls)
-                        isImporting = false
-                    }
-                case .failure(let error):
-                    library.lastError = "The file picker failed: \(error.localizedDescription)"
-                }
-            }
-            .alert("Musico", isPresented: errorIsPresented) {
-                Button("OK", role: .cancel) { library.lastError = nil }
-            } message: {
-                Text(library.lastError ?? "Unknown error")
+            .musicoInsetGroupedListStyle()
+            .navigationTitle("Add")
+            .sheet(isPresented: $isURLSheetPresented) {
+                AddByURLSheet()
             }
         }
         .musicoStackNavigationStyle()
     }
 
-    private var importButton: some View {
-        Button {
-            isImporterPresented = true
-        } label: {
-            Label(isImporting ? "Importing…" : "Import Files", systemImage: "plus.circle")
-                .frame(maxWidth: .infinity)
+    private var headerView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "square.and.arrow.down.on.square")
+                .font(.system(size: 42, weight: .light))
+                .foregroundColor(.accentColor)
+            Text("Add to Your Library")
+                .font(.title2.bold())
         }
-        .disabled(isImporting)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .textCase(nil)
     }
 
-    private var errorIsPresented: Binding<Bool> {
-        Binding(
-            get: { library.lastError != nil },
-            set: { if !$0 { library.lastError = nil } }
-        )
+    private func complianceRow(_ text: String) -> some View {
+        Label(text, systemImage: "checkmark.shield")
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+    }
+}
+
+struct AddByURLSheet: View {
+    @EnvironmentObject private var downloads: DownloadManager
+    @Environment(\.presentationMode) private var presentationMode
+
+    @State private var urlText = ""
+    @State private var isSubmitting = false
+
+    private var trimmed: String {
+        urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSubmit: Bool {
+        !trimmed.isEmpty && !isSubmitting
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    TextField("https://example.com/song.m4a", text: $urlText)
+                        .textContentType(.URL)
+                        .disableAutocorrection(true)
+                        .musicoURLKeyboard()
+
+                    Button {
+                        pasteFromClipboard()
+                    } label: {
+                        Label("Paste from Clipboard", systemImage: "doc.on.clipboard")
+                    }
+                    .disabled(!clipboardHasText)
+                } footer: {
+                    Text("Direct file links only (for example an .mp3, .m4a, .mp4, or .mov). The link must use https and point straight at the file.")
+                }
+            }
+            .navigationTitle("Add from URL")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { submit() }
+                        .disabled(!canSubmit)
+                }
+            }
+        }
+        .musicoStackNavigationStyle()
+    }
+
+    private var clipboardHasText: Bool {
+#if canImport(UIKit)
+        UIPasteboard.general.hasStrings
+#else
+        false
+#endif
+    }
+
+    private func pasteFromClipboard() {
+#if canImport(UIKit)
+        if let string = UIPasteboard.general.string {
+            urlText = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+#endif
+    }
+
+    private func submit() {
+        let input = trimmed
+        guard !input.isEmpty else { return }
+        isSubmitting = true
+        Task {
+            await downloads.addFromURL(input)
+            isSubmitting = false
+            dismiss()
+        }
+    }
+
+    private func dismiss() {
+        presentationMode.wrappedValue.dismiss()
     }
 }

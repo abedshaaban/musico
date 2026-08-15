@@ -1,10 +1,13 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var playback: PlaybackController
     @State private var isCreatingPlaylist = false
     @State private var playlistName = ""
+    @State private var isImporterPresented = false
+    @State private var isImporting = false
 
     var body: some View {
         NavigationView {
@@ -38,8 +41,15 @@ struct LibraryView: View {
                 }
 
                 Section("All Media") {
+                    Button {
+                        isImporterPresented = true
+                    } label: {
+                        Label(isImporting ? "Importing…" : "Import from Files", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(isImporting)
+
                     if library.items.isEmpty {
-                        Text("Import audio or video from the Search tab.")
+                        Text("Import audio or video files from this iPhone, iCloud Drive, or another Files location, or download a link from the Add tab.")
                             .foregroundColor(.secondary)
                     }
                     ForEach(library.items) { item in
@@ -106,8 +116,36 @@ struct LibraryView: View {
                     }
                 }
             }
+            .fileImporter(
+                isPresented: $isImporterPresented,
+                allowedContentTypes: [.audio, .movie],
+                allowsMultipleSelection: true
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    isImporting = true
+                    Task {
+                        await library.importFiles(urls)
+                        isImporting = false
+                    }
+                case .failure(let error):
+                    library.lastError = "The file picker failed: \(error.localizedDescription)"
+                }
+            }
+            .alert("Musico", isPresented: errorIsPresented) {
+                Button("OK", role: .cancel) { library.lastError = nil }
+            } message: {
+                Text(library.lastError ?? "Unknown error")
+            }
         }
         .musicoStackNavigationStyle()
+    }
+
+    private var errorIsPresented: Binding<Bool> {
+        Binding(
+            get: { library.lastError != nil },
+            set: { if !$0 { library.lastError = nil } }
+        )
     }
 
     private func closePlaylistSheet() {

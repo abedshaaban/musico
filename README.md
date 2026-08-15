@@ -11,12 +11,27 @@ Musico is a dependency-free SwiftUI media-library app for iPhone, targeting iOS 
 
 The target is iPhone-only, has an iOS 15.0 deployment target, and declares the Background Modes `audio` capability in `Info.plist`. Playback uses Apple's `AVPlayer`, `AVAudioSession`, and lock-screen `MediaPlayer` APIs.
 
-## First-version scope
+## Tabs
 
-- Search the local library and import user-provided audio/video through the system file picker.
-- Persist copied media, library metadata, and playlists under Application Support.
-- Create playlists, add/remove media, play a playlist, and shuffle.
-- Play/pause, seek, skip, and view video on the Now Playing screen.
-- Show queue and state UI for a future authorized download source.
+- **Add** — paste a direct `https://` link to a media file (or use *Paste from Clipboard*). Musico validates reachability and MIME type, then downloads it in the background.
+- **Downloads** — live progress, cancel, retry, and clear for the background download queue.
+- **Library** — import user-provided audio/video through the Files picker, browse all media, and manage playlists.
+- **Now Playing** — play/pause, seek, skip, shuffle; shows video for video items.
 
-There is intentionally no web search, extraction, scraping, conversion, FFmpeg, or command-line retrieval. `AuthorizedDownloadSource` in `DownloadQueueStore.swift` is the extension point for a future direct-download source. Conversion should be introduced behind a separate protocol only after an authorized local implementation is selected.
+## Add-by-URL flow
+
+1. The URL must use `https` and point straight at an audio or video file **(direct link, not a watch/player page)**.
+2. A `HEAD` (with ranged-`GET` fallback) probe validates the link is reachable and its `Content-Type` is a supported audio/video container before anything is queued.
+3. `URLSession` background configuration (`com.abedshaaban.Musico.downloads`) downloads the file even when the app is suspended; `AppDelegate` captures the background-session completion handler.
+4. The completed file is moved into `Application Support/Musico/Media` and registered in the persistent library.
+
+## Compliance
+
+Musico only fetches URLs the user is authorized to save. Extension points (see `DownloadManager.swift`) allow adding providers for specific services.
+
+- Add a download provider only when a source's terms and the user's rights allow returning a direct file URL.
+- Audio conversion — define a conversion protocol only after an approved, locally supported (e.g. AVFoundation) implementation is chosen.
+
+## Persistence
+
+Copied/downloaded media, library metadata, playlists (`library.json`), and the download queue (`downloads.json`) all live under Application Support. Downloads interrupted by app termination are surfaced as failed with a one-tap retry.

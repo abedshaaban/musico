@@ -3,8 +3,8 @@ import SwiftUI
 struct AppShellView: View {
     var body: some View {
         TabView {
-            SearchImportView()
-                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+            AddView()
+                .tabItem { Label("Add", systemImage: "plus.circle") }
 
             DownloadsView()
                 .tabItem { Label("Downloads", systemImage: "arrow.down.circle") }

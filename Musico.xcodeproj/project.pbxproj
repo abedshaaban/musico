@@ -10,11 +10,11 @@
 		A10000000000000000000001 /* MusicoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* MusicoApp.swift */; };
 		A10000000000000000000002 /* MediaModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* MediaModels.swift */; };
 		A10000000000000000000003 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* LibraryStore.swift */; };
-		A10000000000000000000004 /* DownloadQueueStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* DownloadQueueStore.swift */; };
+		A10000000000000000000004 /* DownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* DownloadManager.swift */; };
 		A10000000000000000000005 /* PlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* PlaybackController.swift */; };
 		A10000000000000000000006 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* AppShellView.swift */; };
 		A10000000000000000000007 /* MediaRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* MediaRow.swift */; };
-		A10000000000000000000008 /* SearchImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* SearchImportView.swift */; };
+		A10000000000000000000008 /* AddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* AddView.swift */; };
 		A10000000000000000000009 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* DownloadsView.swift */; };
 		A1000000000000000000000A /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* LibraryView.swift */; };
 		A1000000000000000000000B /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* NowPlayingView.swift */; };
@@ -25,11 +25,11 @@
 		B10000000000000000000001 /* MusicoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicoApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* MediaModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaModels.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
-		B10000000000000000000004 /* DownloadQueueStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadQueueStore.swift; sourceTree = "<group>"; };
+		B10000000000000000000004 /* DownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadManager.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* PlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackController.swift; sourceTree = "<group>"; };
 		B10000000000000000000006 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		B10000000000000000000007 /* MediaRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaRow.swift; sourceTree = "<group>"; };
-		B10000000000000000000008 /* SearchImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchImportView.swift; sourceTree = "<group>"; };
+		B10000000000000000000008 /* AddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddView.swift; sourceTree = "<group>"; };
 		B10000000000000000000009 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000A /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		B1000000000000000000000B /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
@@ -86,7 +86,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000003 /* LibraryStore.swift */,
-				B10000000000000000000004 /* DownloadQueueStore.swift */,
+				B10000000000000000000004 /* DownloadManager.swift */,
 			);
 			path = Stores;
 			sourceTree = "<group>";
@@ -102,7 +102,7 @@
 			children = (
 				B10000000000000000000006 /* AppShellView.swift */,
 				B10000000000000000000007 /* MediaRow.swift */,
-				B10000000000000000000008 /* SearchImportView.swift */,
+				B10000000000000000000008 /* AddView.swift */,
 				B10000000000000000000009 /* DownloadsView.swift */,
 				B1000000000000000000000A /* LibraryView.swift */,
 				B1000000000000000000000B /* NowPlayingView.swift */,
@@ -189,11 +189,11 @@
 				A10000000000000000000001 /* MusicoApp.swift in Sources */,
 				A10000000000000000000002 /* MediaModels.swift in Sources */,
 				A10000000000000000000003 /* LibraryStore.swift in Sources */,
-				A10000000000000000000004 /* DownloadQueueStore.swift in Sources */,
+				A10000000000000000000004 /* DownloadManager.swift in Sources */,
 				A10000000000000000000005 /* PlaybackController.swift in Sources */,
 				A10000000000000000000006 /* AppShellView.swift in Sources */,
 				A10000000000000000000007 /* MediaRow.swift in Sources */,
-				A10000000000000000000008 /* SearchImportView.swift in Sources */,
+				A10000000000000000000008 /* AddView.swift in Sources */,
 				A10000000000000000000009 /* DownloadsView.swift in Sources */,
 				A1000000000000000000000A /* LibraryView.swift in Sources */,
 				A1000000000000000000000B /* NowPlayingView.swift in Sources */,
