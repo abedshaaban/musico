@@ -1,6 +1,25 @@
 @preconcurrency import AVFoundation
 import Foundation
 
+struct PreparedDownload: Identifiable {
+    let id = UUID()
+    let sourceURL: URL
+    let downloadURL: URL
+    let title: String
+    let artist: String?
+    let sourceName: String
+    let kind: MediaKind
+    let expectedBytes: Int64
+    let thumbnailURL: URL?
+}
+
+private struct DownloadPreparationError: LocalizedError {
+    let failureTitle: String
+    let message: String
+
+    var errorDescription: String? { message }
+}
+
 /// Downloads direct, authorized media file URLs in the background with URLSession,
 /// validates reachability and MIME type before queueing, stores completed files in
 /// Application Support, and registers them in the persistent library.
@@ -16,6 +35,7 @@ final class DownloadManager: NSObject, ObservableObject {
     private var progressPersistenceTask: Task<Void, Never>?
     private var preferredTransport: DownloadTransport = .background
     private static let sandboxTransportPreferenceKey = "Musico.prefersSandboxCompatibleDownloads"
+    private static let youtubeInAppPreferenceKey = "Musico.prefersInAppYouTubeDownloads"
 
     static var sessionIdentifier: String {
         (Bundle.main.bundleIdentifier ?? "com.abedshaaban.Musico") + ".downloads"
@@ -69,95 +89,137 @@ final class DownloadManager: NSObject, ObservableObject {
 
     /// Validate a user-supplied URL, then queue a background download if it checks out.
     func addFromURL(_ rawInput: String) async {
-        await addFromURL(rawInput, transport: preferredTransport)
+        await addFromURL(
+            rawInput,
+            transport: preferredTransport,
+            confirmedTitle: nil,
+            confirmedArtist: nil
+        )
     }
 
-    private func addFromURL(_ rawInput: String, transport: DownloadTransport) async {
+    private func addFromURL(
+        _ rawInput: String,
+        transport: DownloadTransport,
+        confirmedTitle: String?,
+        confirmedArtist: String?
+    ) async {
+        do {
+            let prepared = try await prepareFromURL(rawInput)
+            startPreparedDownload(
+                prepared,
+                title: confirmedTitle ?? prepared.title,
+                artist: confirmedArtist ?? prepared.artist ?? "",
+                transport: transport
+            )
+        } catch let error as DownloadPreparationError {
+            insertFailed(title: error.failureTitle, detail: error.message)
+        } catch {
+            insertFailed(title: "Download failed", detail: error.localizedDescription)
+        }
+    }
+
+    /// Resolve and validate a URL without creating a download task. The returned values
+    /// are presented for user review before `startPreparedDownload` is called.
+    func prepareFromURL(_ rawInput: String) async throws -> PreparedDownload {
         let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard let url = Self.sanitizedURL(from: trimmed) else {
-            insertFailed(title: "Invalid link", detail: "Enter a full https:// link to an audio or video file.")
-            return
+            throw DownloadPreparationError(
+                failureTitle: "Invalid link",
+                message: "Enter a full https:// link to an audio or video file."
+            )
         }
         guard !Self.isBlockedHost(url) else {
-            insertFailed(
-                title: "Unsupported link",
-                detail: "Links from protected streaming services aren't supported. Paste a direct https:// link to an audio or video file you're authorized to save."
+            throw DownloadPreparationError(
+                failureTitle: "Unsupported link",
+                message: "Links from protected streaming services aren't supported. Paste a direct https:// link to an audio or video file you're authorized to save."
             )
-            return
         }
 
         // YouTube URLs are resolved via the internal player API rather than probed as files.
         if YouTubeResolver.handles(url) {
             guard let videoID = YouTubeResolver.videoID(from: url) else {
-                insertFailed(title: "Invalid YouTube link", detail: "The link doesn't contain a valid YouTube video ID.")
-                return
+                throw DownloadPreparationError(
+                    failureTitle: "Invalid YouTube link",
+                    message: "The link doesn't contain a valid YouTube video ID."
+                )
             }
-            await addYouTubeVideo(id: videoID, sourceURL: url, transport: transport)
-            return
+            do {
+                let resolved = try await YouTubeResolver.resolve(videoID: videoID)
+                return PreparedDownload(
+                    sourceURL: url,
+                    downloadURL: resolved.url,
+                    title: resolved.title,
+                    artist: resolved.artist,
+                    sourceName: "YouTube",
+                    kind: resolved.kind,
+                    expectedBytes: resolved.expectedBytes,
+                    thumbnailURL: resolved.thumbnailURL
+                )
+            } catch {
+                throw DownloadPreparationError(
+                    failureTitle: "YouTube download failed",
+                    message: error.localizedDescription
+                )
+            }
         }
-
-        let record = DownloadRecord(
-            title: Self.suggestedTitle(from: url),
-            sourceName: url.host ?? "Direct link",
-            state: .validating,
-            detail: "Checking reachability and file type…",
-            remoteURL: url
-        )
-        records.insert(record, at: 0)
-        persist()
 
         switch await probe(url) {
         case .failure(let message):
-            update(record.id) {
-                $0.state = .failed
-                $0.detail = message
-            }
+            throw DownloadPreparationError(failureTitle: "Link unavailable", message: message)
         case .success(let resolved):
-            update(record.id) {
-                $0.title = resolved.title
-                $0.mediaKind = resolved.kind
-                $0.totalBytes = resolved.expectedBytes
-                $0.state = .downloading
-                $0.detail = transport.progressDetail(for: resolved.kind)
-            }
-            startTask(for: record.id, url: url, transport: transport)
+            return PreparedDownload(
+                sourceURL: url,
+                downloadURL: url,
+                title: resolved.title,
+                artist: nil,
+                sourceName: url.host ?? "Direct link",
+                kind: resolved.kind,
+                expectedBytes: resolved.expectedBytes,
+                thumbnailURL: nil
+            )
         }
     }
 
-    private func addYouTubeVideo(
-        id videoID: String,
-        sourceURL: URL,
+    func startPreparedDownload(
+        _ prepared: PreparedDownload,
+        title: String,
+        artist: String
+    ) {
+        let transport: DownloadTransport = prepared.sourceName == "YouTube"
+            && UserDefaults.standard.bool(forKey: Self.youtubeInAppPreferenceKey)
+            ? .inApp
+            : preferredTransport
+        startPreparedDownload(
+            prepared,
+            title: title,
+            artist: artist,
+            transport: transport
+        )
+    }
+
+    private func startPreparedDownload(
+        _ prepared: PreparedDownload,
+        title: String,
+        artist: String,
         transport: DownloadTransport
-    ) async {
+    ) {
+        let cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         let record = DownloadRecord(
-            title: "YouTube Video",
-            sourceName: "YouTube",
-            state: .validating,
-            detail: "Resolving YouTube stream…",
-            remoteURL: sourceURL
+            title: cleanedTitle.isEmpty ? prepared.title : cleanedTitle,
+            artist: cleanedArtist.isEmpty ? nil : cleanedArtist,
+            sourceName: prepared.sourceName,
+            state: .downloading,
+            detail: transport.progressDetail(for: prepared.kind),
+            remoteURL: prepared.sourceURL,
+            mediaKind: prepared.kind,
+            totalBytes: prepared.expectedBytes,
+            thumbnailURL: prepared.thumbnailURL
         )
         records.insert(record, at: 0)
         persist()
-
-        do {
-            let resolved = try await YouTubeResolver.resolve(videoID: videoID)
-            update(record.id) {
-                $0.title = resolved.title
-                $0.artist = resolved.artist
-                $0.mediaKind = resolved.kind
-                $0.totalBytes = resolved.expectedBytes
-                $0.thumbnailURL = resolved.thumbnailURL
-                $0.state = .downloading
-                $0.detail = transport.progressDetail(for: resolved.kind)
-            }
-            startTask(for: record.id, url: resolved.url, transport: transport)
-        } catch {
-            update(record.id) {
-                $0.state = .failed
-                $0.detail = error.localizedDescription
-            }
-        }
+        startTask(for: record.id, url: prepared.downloadURL, transport: transport)
     }
 
     func cancel(_ record: DownloadRecord) {
@@ -172,9 +234,30 @@ final class DownloadManager: NSObject, ObservableObject {
 
     func retry(_ record: DownloadRecord) {
         guard let raw = record.remoteURL?.absoluteString else { return }
-        let transport = DownloadTransport.retryTransport(after: record.detail)
+        let needsYouTubeInAppRetry = Self.shouldUseInAppForRetry(record)
+        let transport = needsYouTubeInAppRetry
+            ? DownloadTransport.inApp
+            : DownloadTransport.retryTransport(after: record.detail)
+        if needsYouTubeInAppRetry {
+            UserDefaults.standard.set(true, forKey: Self.youtubeInAppPreferenceKey)
+        }
+        let confirmedTitle = record.title
+        let confirmedArtist = record.artist
         remove(record)
-        Task { await addFromURL(raw, transport: transport) }
+        Task {
+            await addFromURL(
+                raw,
+                transport: transport,
+                confirmedTitle: confirmedTitle,
+                confirmedArtist: confirmedArtist
+            )
+        }
+    }
+
+    static func shouldUseInAppForRetry(_ record: DownloadRecord) -> Bool {
+        record.sourceName == "YouTube"
+            && record.receivedBytes == 0
+            && record.diagnostic?.contains("NSURLErrorDomain -1") == true
     }
 
     func remove(_ record: DownloadRecord) {
@@ -581,7 +664,8 @@ extension DownloadManager: URLSessionDownloadDelegate {
         guard let recordID = task.taskDescription.flatMap(UUID.init) else { return }
         let nsError = error as NSError
         let cancelled = nsError.code == NSURLErrorCancelled
-        let transport = session.configuration.identifier == nil
+        let isBackgroundTransport = session.configuration.identifier != nil
+        let transport = !isBackgroundTransport
             ? "In-app sandbox-compatible session"
             : "Background URLSession (\(session.configuration.identifier ?? "unknown"))"
         let diagnostic = DownloadDiagnostics.report(
@@ -592,6 +676,26 @@ extension DownloadManager: URLSessionDownloadDelegate {
             taskIdentifier: task.taskIdentifier
         )
         Task { @MainActor in
+            guard let record = records.first(where: { $0.id == recordID }) else { return }
+            if Self.shouldRetryYouTubeInApp(
+                sourceName: record.sourceName,
+                receivedBytes: record.receivedBytes,
+                error: nsError,
+                isBackgroundTransport: isBackgroundTransport
+            ), let sourceURL = record.remoteURL {
+                let confirmedTitle = record.title
+                let confirmedArtist = record.artist
+                UserDefaults.standard.set(true, forKey: Self.youtubeInAppPreferenceKey)
+                records.removeAll { $0.id == recordID }
+                persist()
+                await addFromURL(
+                    sourceURL.absoluteString,
+                    transport: .inApp,
+                    confirmedTitle: confirmedTitle,
+                    confirmedArtist: confirmedArtist
+                )
+                return
+            }
             update(recordID) {
                 guard $0.state.isActive else { return }
                 $0.state = cancelled ? .cancelled : .failed
@@ -599,6 +703,19 @@ extension DownloadManager: URLSessionDownloadDelegate {
                 if !cancelled { $0.diagnostic = diagnostic }
             }
         }
+    }
+
+    nonisolated static func shouldRetryYouTubeInApp(
+        sourceName: String,
+        receivedBytes: Int64,
+        error: NSError,
+        isBackgroundTransport: Bool
+    ) -> Bool {
+        isBackgroundTransport
+            && sourceName == "YouTube"
+            && receivedBytes == 0
+            && error.domain == NSURLErrorDomain
+            && error.code == NSURLErrorUnknown
     }
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

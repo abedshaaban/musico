@@ -197,13 +197,12 @@ final class LibraryStore: ObservableObject {
             artworkFilename = try? MediaMetadataExtractor.saveArtwork(artworkData, to: AppPaths.artwork)
         }
 
-        let inferredArtist = artist?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let confirmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let confirmedArtist = artist?.trimmingCharacters(in: .whitespacesAndNewlines)
         let item = LibraryItem(
             id: UUID(),
-            title: metadata.title?.isEmpty == false ? metadata.title! : (title.isEmpty ? "Untitled" : title),
-            artist: metadata.artist?.isEmpty == false
-                ? metadata.artist!
-                : (inferredArtist?.isEmpty == false ? inferredArtist! : "Unknown Artist"),
+            title: Self.downloadedTitle(confirmed: confirmedTitle, embedded: metadata.title),
+            artist: Self.downloadedArtist(confirmed: confirmedArtist, embedded: metadata.artist),
             kind: kind,
             localFilename: storedFilename,
             originalFilename: originalFilename,
@@ -226,6 +225,18 @@ final class LibraryStore: ObservableObject {
                 save()
             }
         }
+    }
+
+    static func downloadedTitle(confirmed: String, embedded: String?) -> String {
+        if !confirmed.isEmpty { return confirmed }
+        if let embedded, !embedded.isEmpty { return embedded }
+        return "Untitled"
+    }
+
+    static func downloadedArtist(confirmed: String?, embedded: String?) -> String {
+        if let confirmed, !confirmed.isEmpty { return confirmed }
+        if let embedded, !embedded.isEmpty { return embedded }
+        return "Unknown Artist"
     }
 
     func setArtwork(for item: LibraryItem, from sourceURL: URL) async {

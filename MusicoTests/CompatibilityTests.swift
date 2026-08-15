@@ -224,6 +224,47 @@ final class CompatibilityTests: XCTestCase {
         )
     }
 
+    func testUnknownBackgroundYouTubeFailureRetriesInApp() {
+        XCTAssertTrue(
+            DownloadManager.shouldRetryYouTubeInApp(
+                sourceName: "YouTube",
+                receivedBytes: 0,
+                error: NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown),
+                isBackgroundTransport: true
+            )
+        )
+        XCTAssertFalse(
+            DownloadManager.shouldRetryYouTubeInApp(
+                sourceName: "YouTube",
+                receivedBytes: 0,
+                error: NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown),
+                isBackgroundTransport: false
+            )
+        )
+        XCTAssertFalse(
+            DownloadManager.shouldRetryYouTubeInApp(
+                sourceName: "example.com",
+                receivedBytes: 0,
+                error: NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown),
+                isBackgroundTransport: true
+            )
+        )
+    }
+
+    @MainActor
+    func testRecordedUnknownYouTubeFailureUsesInAppRetry() {
+        let record = DownloadRecord(
+            title: "Loser",
+            artist: "Tame Impala",
+            sourceName: "YouTube",
+            state: .failed,
+            detail: "unknown error",
+            diagnostic: "Error: NSURLErrorDomain -1: unknown error"
+        )
+
+        XCTAssertTrue(DownloadManager.shouldUseInAppForRetry(record))
+    }
+
     func testExistingPermissionFailureMakesFutureDownloadsSandboxCompatible() {
         let failed = DownloadRecord(
             title: "Failed download",
@@ -268,6 +309,51 @@ final class CompatibilityTests: XCTestCase {
         XCTAssertEqual(record.state, .failed)
         XCTAssertNil(record.diagnostic)
         XCTAssertNil(record.artist)
+    }
+
+    func testDownloadRecordPersistsConfirmedArtist() throws {
+        let record = DownloadRecord(
+            title: "Loser",
+            artist: "Tame Impala",
+            sourceName: "YouTube",
+            state: .downloading
+        )
+
+        let data = try JSONEncoder().encode(record)
+        let decoded = try JSONDecoder().decode(DownloadRecord.self, from: data)
+
+        XCTAssertEqual(decoded.title, "Loser")
+        XCTAssertEqual(decoded.artist, "Tame Impala")
+    }
+
+    @MainActor
+    func testConfirmedDownloadMetadataOverridesEmbeddedTags() {
+        XCTAssertEqual(
+            LibraryStore.downloadedTitle(
+                confirmed: "Loser",
+                embedded: "tame impala - loser (lyrics)"
+            ),
+            "Loser"
+        )
+        XCTAssertEqual(
+            LibraryStore.downloadedArtist(
+                confirmed: "Tame Impala",
+                embedded: "Lyrical Tunes"
+            ),
+            "Tame Impala"
+        )
+    }
+
+    @MainActor
+    func testBlankConfirmedArtistUsesAvailableFallback() {
+        XCTAssertEqual(
+            LibraryStore.downloadedArtist(confirmed: "", embedded: "Massive Attack"),
+            "Massive Attack"
+        )
+        XCTAssertEqual(
+            LibraryStore.downloadedArtist(confirmed: nil, embedded: nil),
+            "Unknown Artist"
+        )
     }
 
     func testDownloadDiagnosticsIncludesUnderlyingErrorAndPath() {

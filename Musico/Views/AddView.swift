@@ -28,7 +28,7 @@ struct AddView: View {
                 } header: {
                     headerView
                 } footer: {
-                    Text("Paste a direct https:// link to an audio or video file, or a YouTube video link. Musico validates the link, then downloads it in the background.")
+                    Text("Paste a direct https:// link to an audio or video file, or a YouTube video link. Musico validates the link and lets you review the title and artist before downloading.")
                 }
 
                 if activeCount > 0 {
@@ -71,6 +71,9 @@ struct AddByURLSheet: View {
 
     @State private var urlText = ""
     @State private var isSubmitting = false
+    @State private var preparedDownload: PreparedDownload?
+    @State private var errorMessage = ""
+    @State private var isShowingError = false
 
     private var trimmed: String {
         urlText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -107,12 +110,28 @@ struct AddByURLSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { submit() }
-                        .disabled(!canSubmit)
+                    if isSubmitting {
+                        ProgressView()
+                    } else {
+                        Button("Review") { submit() }
+                            .disabled(!canSubmit)
+                    }
                 }
             }
         }
         .musicoStackNavigationStyle()
+        .sheet(item: $preparedDownload) { prepared in
+            DownloadConfirmationSheet(prepared: prepared) { title, artist in
+                downloads.startPreparedDownload(prepared, title: title, artist: artist)
+                preparedDownload = nil
+                dismiss()
+            }
+        }
+        .alert("Couldn't Prepare Download", isPresented: $isShowingError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage)
+        }
     }
 
     private var clipboardHasText: Bool {
@@ -136,13 +155,102 @@ struct AddByURLSheet: View {
         guard !input.isEmpty else { return }
         isSubmitting = true
         Task {
-            await downloads.addFromURL(input)
+            do {
+                preparedDownload = try await downloads.prepareFromURL(input)
+            } catch {
+                errorMessage = error.localizedDescription
+                isShowingError = true
+            }
             isSubmitting = false
-            dismiss()
         }
     }
 
     private func dismiss() {
         presentationMode.wrappedValue.dismiss()
+    }
+}
+
+private struct DownloadConfirmationSheet: View {
+    @Environment(\.presentationMode) private var presentationMode
+
+    let prepared: PreparedDownload
+    let onConfirm: (String, String) -> Void
+
+    @State private var title: String
+    @State private var artist: String
+
+    init(prepared: PreparedDownload, onConfirm: @escaping (String, String) -> Void) {
+        self.prepared = prepared
+        self.onConfirm = onConfirm
+        _title = State(initialValue: prepared.title)
+        _artist = State(initialValue: prepared.artist ?? "")
+    }
+
+    private var canConfirm: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Title")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextField(musicoPrompt: "Song title", text: $title)
+                            .musicoFormTextField()
+                    }
+                    .padding(.vertical, 2)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Artist")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        ArtistComboField(artist: $artist)
+                    }
+                    .padding(.vertical, 2)
+                } header: {
+                    Text("Song Details")
+                } footer: {
+                    Text("Edit anything you want before downloading.")
+                }
+
+                Section {
+                    HStack {
+                        Label(prepared.kind.label, systemImage: prepared.kind.systemImage)
+                        Spacer()
+                        Text(prepared.sourceName)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("Source")
+                }
+
+                Section {
+                    Button {
+                        onConfirm(title, artist)
+                    } label: {
+                        Label("Start Downloading", systemImage: "arrow.down.circle.fill")
+                            .frame(maxWidth: .infinity)
+                            .font(.body.weight(.semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canConfirm)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                } footer: {
+                    Text("The download starts only after you tap the button above.")
+                }
+            }
+            .navigationTitle("Review")
+            .musicoInlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Back") { presentationMode.wrappedValue.dismiss() }
+                }
+            }
+        }
+        .musicoStackNavigationStyle()
     }
 }
